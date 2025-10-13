@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 1479
 expression: terminal.backend()
 ---
-" ◦  tui  󱚥 gpt-5-codex              "
+" tui  󱚥 gpt-5-codex    vermissian "

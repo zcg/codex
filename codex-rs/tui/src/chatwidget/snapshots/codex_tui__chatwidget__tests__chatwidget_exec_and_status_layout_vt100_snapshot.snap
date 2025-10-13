@@ -12,4 +12,4 @@ expression: term.backend().vt100().screen().contents()
 
 › Summarize recent commits
 
- ◦  tui  󱚥 gpt-5-codex         󰋩 earth   vermissian   ck-kubero-admin 
+ tui  󱚥 gpt-5-codex             󰋩 earth   vermissian   ck-kubero-admin 

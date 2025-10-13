@@ -696,23 +696,8 @@ impl<'a> RenderModel<'a> {
     }
 
     fn run_state_segments(&self, state: Option<&StatusLineRunState>) -> Vec<PowerlineSegment> {
-        let fallback_state;
-        let state = if let Some(state) = state {
-            state
-        } else {
-            fallback_state = StatusLineRunState {
-                label: DEFAULT_STATUS_MESSAGE.to_string(),
-                spinner_started_at: None,
-                timer: Some(RunTimerSnapshot {
-                    elapsed_running: Duration::ZERO,
-                    last_resume_at: None,
-                    is_paused: true,
-                }),
-                queued_messages: Vec::new(),
-                show_interrupt_hint: false,
-                status_changed_at: self.now,
-            };
-            &fallback_state
+        let Some(state) = state else {
+            return Vec::new();
         };
 
         let mut segments: Vec<PowerlineSegment> = Vec::new();

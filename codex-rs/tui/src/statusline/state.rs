@@ -234,7 +234,21 @@ impl StatusLineState {
 
     pub(crate) fn render_run_pill(&self, width: u16) -> Line<'static> {
         let now = Instant::now();
-        let snapshot = self.snapshot_for_render(now);
+        let mut snapshot = self.snapshot_for_render(now);
+        if snapshot.run_state.is_none() {
+            snapshot.run_state = Some(StatusLineRunState {
+                label: DEFAULT_STATUS_MESSAGE.to_string(),
+                spinner_started_at: None,
+                timer: Some(RunTimerSnapshot {
+                    elapsed_running: Duration::ZERO,
+                    last_resume_at: None,
+                    is_paused: true,
+                }),
+                queued_messages: Vec::new(),
+                show_interrupt_hint: false,
+                status_changed_at: now,
+            });
+        }
         self.renderer.render_run_pill(&snapshot, width, now)
     }
 

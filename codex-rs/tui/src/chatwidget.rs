@@ -944,19 +944,21 @@ impl ChatWidget {
     fn layout_areas(&self, area: Rect) -> [Rect; 5] {
         let header_height = 0u16;
         let status_height = if area.height > 0 { 1 } else { 0 };
-        let mut available = area.height.saturating_sub(status_height);
 
-        let bottom_height = self.bottom_pane.desired_height(area.width).min(available);
-        available = available.saturating_sub(bottom_height);
+        let mut remaining = area.height.saturating_sub(status_height);
 
-        let pill_height = if available > 0 { 1 } else { 0 };
-        available = available.saturating_sub(pill_height);
+        let pill_height = if remaining > 0 { 1 } else { 0 };
+        remaining = remaining.saturating_sub(pill_height);
+
+        let bottom_desired = self.bottom_pane.desired_height(area.width);
+        let bottom_height = bottom_desired.min(remaining);
+        remaining = remaining.saturating_sub(bottom_height);
 
         let active_desired = self
             .active_cell
             .as_ref()
             .map_or(0, |c| c.desired_height(area.width) + 1);
-        let active_height = active_desired.min(available);
+        let active_height = active_desired.min(remaining);
 
         Layout::vertical([
             Constraint::Length(header_height),
