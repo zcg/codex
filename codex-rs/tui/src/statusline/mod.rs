@@ -701,27 +701,41 @@ impl<'a> RenderModel<'a> {
         };
 
         let mut segments: Vec<PowerlineSegment> = Vec::new();
-        let spinner_span = spinner(state.spinner_started_at);
 
-        if self.show_run_label {
-            let label = self.run_label_text(state);
-            segments.push(self.status_capsule_segment(spinner_span, &label, state));
-        } else {
-            let accent = self.status_capsule_accent(state);
-            segments.push(PowerlineSegment::from_spans(accent, vec![spinner_span]));
+        let mut capsule_spans: Vec<Span<'static>> = Vec::new();
+        if self.show_run_timer {
+            let elapsed_secs = state
+                .timer
+                .as_ref()
+                .map(|timer| timer.elapsed_at(self.now).as_secs())
+                .unwrap_or(0);
+            capsule_spans.push(Span::raw(format!(
+                "󰔟 {}",
+                format_elapsed_compact(elapsed_secs)
+            )));
         }
 
-        if self.show_run_timer {
-            if let Some(timer) = state.timer.as_ref() {
-                let elapsed = timer.elapsed_at(self.now).as_secs();
-                let text = format!("󰔟 {}", format_elapsed_compact(elapsed));
-                segments.push(PowerlineSegment::text(PEACH, text));
-            } else {
-                segments.push(PowerlineSegment::text(
-                    MAUVE,
-                    format!("󰔟 {}", format_elapsed_compact(0)),
-                ));
+        if self.show_run_label {
+            if !capsule_spans.is_empty() {
+                capsule_spans.push(" ".into());
             }
+            capsule_spans.push(spinner(state.spinner_started_at));
+            let label = self.run_label_text(state);
+            if !label.trim().is_empty() {
+                capsule_spans.push(" ".into());
+                capsule_spans.push(Span::raw(label.trim().to_string()));
+            }
+        }
+
+        if capsule_spans.is_empty() {
+            let accent = self.status_capsule_accent(state);
+            segments.push(PowerlineSegment::from_spans(
+                accent,
+                vec![spinner(state.spinner_started_at)],
+            ));
+        } else {
+            let accent = self.status_capsule_accent(state);
+            segments.push(PowerlineSegment::from_spans(accent, capsule_spans));
         }
 
         if self.include_queue_preview && !state.queued_messages.is_empty() {
@@ -760,23 +774,6 @@ impl<'a> RenderModel<'a> {
             }
             label
         }
-    }
-
-    fn status_capsule_segment(
-        &self,
-        spinner_span: Span<'static>,
-        label: &str,
-        state: &StatusLineRunState,
-    ) -> PowerlineSegment {
-        let mut spans: Vec<Span<'static>> = Vec::with_capacity(3);
-        spans.push(spinner_span);
-        let trimmed = label.trim();
-        if !trimmed.is_empty() {
-            spans.push(" ".into());
-            spans.push(Span::raw(trimmed.to_string()));
-        }
-        let accent = self.status_capsule_accent(state);
-        PowerlineSegment::from_spans(accent, spans)
     }
 
     fn status_capsule_accent(&self, state: &StatusLineRunState) -> Color {

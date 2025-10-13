@@ -1306,14 +1306,8 @@ fn approval_modal_exec_snapshot() {
     terminal
         .draw(|f| f.render_widget_ref(&chat, f.area()))
         .expect("draw approval modal");
-    assert!(
-        terminal
-            .backend()
-            .vt100()
-            .screen()
-            .contents()
-            .contains("echo hello world")
-    );
+    let contents = terminal.backend().vt100().screen().contents();
+    assert!(contents.contains("echo hello world"));
     assert_snapshot!(
         "approval_modal_exec",
         terminal.backend().vt100().screen().contents()

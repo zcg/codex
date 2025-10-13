@@ -941,18 +941,30 @@ impl ChatWidget {
         self.status_line.update_run_header("Working");
     }
 
-    fn layout_areas(&self, area: Rect) -> [Rect; 5] {
+    fn layout_areas(&self, area: Rect) -> [Rect; 6] {
         let header_height = 0u16;
+        let has_active_view = self.bottom_pane.has_active_view();
         let status_height = if area.height > 0 { 1 } else { 0 };
 
         let mut remaining = area.height.saturating_sub(status_height);
 
-        let pill_height = if remaining > 0 { 1 } else { 0 };
+        let pill_height = if !has_active_view && remaining > 0 {
+            1
+        } else {
+            0
+        };
         remaining = remaining.saturating_sub(pill_height);
 
         let bottom_desired = self.bottom_pane.desired_height(area.width);
         let bottom_height = bottom_desired.min(remaining);
         remaining = remaining.saturating_sub(bottom_height);
+
+        let spacer_height = if !has_active_view && remaining > 0 {
+            1
+        } else {
+            0
+        };
+        remaining = remaining.saturating_sub(spacer_height);
 
         let active_desired = self
             .active_cell
@@ -965,6 +977,7 @@ impl ChatWidget {
             Constraint::Length(active_height),
             Constraint::Length(pill_height),
             Constraint::Length(bottom_height),
+            Constraint::Length(spacer_height),
             Constraint::Length(status_height),
         ])
         .areas(area)
@@ -2243,7 +2256,7 @@ impl ChatWidget {
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        let [_, _, _, bottom_pane_area, _] = self.layout_areas(area);
+        let [_, _, _, bottom_pane_area, _, _] = self.layout_areas(area);
         self.bottom_pane.cursor_pos(bottom_pane_area)
     }
 }
@@ -2255,6 +2268,7 @@ impl WidgetRef for &ChatWidget {
             active_cell_area,
             pill_area,
             bottom_pane_area,
+            spacer_area,
             status_area,
         ] = self.layout_areas(area);
         let has_active_view = self.bottom_pane.has_active_view();
@@ -2278,6 +2292,9 @@ impl WidgetRef for &ChatWidget {
                 let line = self.status_line.render_run_pill(pill_area.width);
                 Paragraph::new(line).render(pill_area, buf);
             }
+        }
+        if !spacer_area.is_empty() {
+            Paragraph::new("").render(spacer_area, buf);
         }
         if !status_area.is_empty() {
             if has_active_view {
