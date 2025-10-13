@@ -3,19 +3,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::status::format_directory_display;
+use crate::tui::FrameRequester;
 use codex_core::config::Config;
 use codex_core::protocol::TokenUsageInfo;
 use codex_core::protocol_config_types::ReasoningEffort;
 use ratatui::text::Line;
-use unicode_width::UnicodeWidthStr;
-
-use crate::status::format_directory_display;
-use crate::tui::FrameRequester;
 
 use super::DEFAULT_STATUS_MESSAGE;
-use super::MARQUEE_STEP_MS;
 use super::RunTimerSnapshot;
-use super::STATUS_CAPSULE_TEXT_WIDTH;
 use super::StatusLineContextSnapshot;
 use super::StatusLineDevspaceSnapshot;
 use super::StatusLineGitSnapshot;
@@ -225,19 +221,21 @@ impl StatusLineState {
         if timer_active {
             self.frame_requester
                 .schedule_frame_in(Duration::from_millis(48));
-        } else if let Some(run_state) = snapshot.run_state.as_ref()
-            && UnicodeWidthStr::width(run_state.label.as_str()) > STATUS_CAPSULE_TEXT_WIDTH
-        {
-            self.frame_requester
-                .schedule_frame_in(Duration::from_millis(MARQUEE_STEP_MS));
         }
         snapshot
     }
 
     pub(crate) fn render_line(&self, width: u16) -> Line<'static> {
         let now = Instant::now();
-        let snapshot = self.snapshot_for_render(now);
+        let mut snapshot = self.snapshot_for_render(now);
+        snapshot.run_state = None;
         self.renderer.render(&snapshot, width, now)
+    }
+
+    pub(crate) fn render_run_pill(&self, width: u16) -> Line<'static> {
+        let now = Instant::now();
+        let snapshot = self.snapshot_for_render(now);
+        self.renderer.render_run_pill(&snapshot, width, now)
     }
 
     fn request_redraw(&self) {
@@ -328,10 +326,45 @@ fn token_snapshot_from_info(
     };
 
     let context_snapshot = context_window.map(|window| StatusLineContextSnapshot {
-        percent_remaining: total.percent_of_context_window_remaining(window),
-        tokens_in_context: total.tokens_in_context_window(),
+        percent_remaining: last.percent_of_context_window_remaining(window),
+        tokens_in_context: last.tokens_in_context_window(),
         window,
     });
 
     (token_snapshot, context_snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_core::protocol::TokenUsage;
+
+    #[test]
+    fn context_snapshot_matches_status_values() {
+        let window = 272_000;
+        let info = TokenUsageInfo {
+            total_token_usage: TokenUsage {
+                total_tokens: 540_000,
+                input_tokens: 420_000,
+                cached_input_tokens: 160_000,
+                output_tokens: 120_000,
+                reasoning_output_tokens: 60_000,
+            },
+            last_token_usage: TokenUsage {
+                total_tokens: 110_300,
+                input_tokens: 74_000,
+                cached_input_tokens: 18_000,
+                output_tokens: 36_300,
+                reasoning_output_tokens: 12_000,
+            },
+            model_context_window: Some(window),
+        };
+
+        let (_, context_snapshot) = token_snapshot_from_info(&info, info.model_context_window);
+        let context = context_snapshot.expect("context snapshot");
+
+        assert_eq!(context.window, window);
+        assert_eq!(context.tokens_in_context, 98_300);
+        assert_eq!(context.percent_remaining, 66);
+    }
 }

@@ -3,4 +3,4 @@ source: tui/src/chatwidget/tests.rs
 expression: terminal.backend()
 ---
 "› Ask Codex to do anything              "
-" •  tui  󱚥 gpt-5-codex              "
+" ◦  tui  󱚥 gpt-5-codex              "

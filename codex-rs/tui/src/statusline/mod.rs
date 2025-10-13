@@ -56,13 +56,7 @@ const PROGRESS_RIGHT_FULL: &str = "";
 const MODEL_ICONS: &[char] = &['󰚩', '󱚝', '󱚟', '󱚡', '󱚣', '󱚥'];
 const DEVSPACE_ICONS: &[&str] = &["󰠖 ", "󰠶 ", "󰋩 ", "󰚌 "];
 const CONTEXT_PADDING: usize = 4;
-const DEFAULT_STATUS_MESSAGE: &str = "Waiting for input";
-pub(super) const STATUS_CAPSULE_WIDTH: usize = 32;
-pub(super) const STATUS_CAPSULE_SPINNER_WIDTH: usize = 1;
-pub(super) const STATUS_CAPSULE_GAP_WIDTH: usize = 1;
-pub(super) const STATUS_CAPSULE_TEXT_WIDTH: usize =
-    STATUS_CAPSULE_WIDTH - STATUS_CAPSULE_SPINNER_WIDTH - STATUS_CAPSULE_GAP_WIDTH;
-pub(super) const MARQUEE_STEP_MS: u64 = 450;
+const DEFAULT_STATUS_MESSAGE: &str = "Ready when you are";
 
 fn span<S>(text: S, style: Style) -> Span<'static>
 where
@@ -305,6 +299,15 @@ impl EnvironmentInclusion {
             devspace: snapshot.devspace.is_some(),
         }
     }
+
+    fn empty() -> Self {
+        Self {
+            hostname: false,
+            aws_profile: false,
+            kubernetes: false,
+            devspace: false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -322,6 +325,49 @@ impl StatusLineRenderer {
             if !model.apply_next_degrade() {
                 let fallback = model.fallback_line();
                 return truncate_line_to_width(fallback, target_width);
+            }
+        }
+    }
+
+    pub fn render_run_pill(
+        &self,
+        snapshot: &StatusLineSnapshot,
+        width: u16,
+        now: Instant,
+    ) -> Line<'static> {
+        let target_width = width as usize;
+        if target_width == 0 {
+            return Line::from(Vec::<Span<'static>>::new());
+        }
+
+        let mut model = RenderModel::new(snapshot, now);
+        model.path_variant = PathVariant::Hidden;
+        model.token_variant = TokenVariant::Hidden;
+        model.context_variant = ContextVariant::Hidden;
+        model.git_variant = GitVariant::Hidden;
+        model.env = EnvironmentInclusion::empty();
+        model.include_queue_preview = true;
+        model.show_interrupt_hint = false;
+
+        let mut attempts = 0usize;
+        loop {
+            let segments = model.run_state_segments(snapshot.run_state.as_ref());
+            let spans = capsule_spans(segments);
+            let mut line = Line::from(spans.clone());
+            let display_width = line_display_width(&line);
+            if display_width <= target_width {
+                if display_width < target_width {
+                    let padding = " ".repeat(target_width - display_width);
+                    line.spans.push(Span::raw(padding));
+                }
+                return line;
+            }
+            if !degrade_run_capsule(&mut model) {
+                return truncate_line_to_width(Line::from(spans), target_width);
+            }
+            attempts += 1;
+            if attempts > 8 {
+                return truncate_line_to_width(Line::from(spans), target_width);
             }
         }
     }
@@ -737,19 +783,13 @@ impl<'a> RenderModel<'a> {
         label: &str,
         state: &StatusLineRunState,
     ) -> PowerlineSegment {
-        debug_assert_eq!(
-            STATUS_CAPSULE_TEXT_WIDTH + STATUS_CAPSULE_SPINNER_WIDTH + STATUS_CAPSULE_GAP_WIDTH,
-            STATUS_CAPSULE_WIDTH
-        );
-        let marquee = marquee_text(label, state, self.now);
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(3);
         spans.push(spinner_span);
-        match STATUS_CAPSULE_GAP_WIDTH {
-            0 => {}
-            1 => spans.push(" ".into()),
-            gap => spans.push(Span::raw(" ".repeat(gap))),
+        let trimmed = label.trim();
+        if !trimmed.is_empty() {
+            spans.push(" ".into());
+            spans.push(Span::raw(trimmed.to_string()));
         }
-        spans.push(Span::raw(marquee));
         let accent = self.status_capsule_accent(state);
         PowerlineSegment::from_spans(accent, spans)
     }
@@ -919,6 +959,21 @@ impl<'a> RenderModel<'a> {
     }
 }
 
+fn degrade_run_capsule(model: &mut RenderModel<'_>) -> bool {
+    const OPS: &[DegradeOp] = &[
+        DegradeOp::DropQueuePreview,
+        DegradeOp::HideRunTimer,
+        DegradeOp::ShortenRunLabel,
+        DegradeOp::HideRunLabel,
+    ];
+    for op in OPS {
+        if model.apply_degrade(*op) {
+            return true;
+        }
+    }
+    false
+}
+
 struct PowerlineSegment {
     accent: Color,
     spans: Vec<Span<'static>>,
@@ -948,6 +1003,24 @@ impl PowerlineSegment {
     }
 }
 
+fn capsule_spans(segments: Vec<PowerlineSegment>) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut iter = segments.into_iter();
+    if let Some(first) = iter.next() {
+        let mut previous_accent = first.accent;
+        spans.push(span(LEFT_CURVE, accent_fg(previous_accent)));
+        spans.extend(first.into_padded_spans());
+        for segment in iter {
+            let accent = segment.accent;
+            spans.push(span(LEFT_CHEVRON, bridge_left(previous_accent, accent)));
+            spans.extend(segment.into_padded_spans());
+            previous_accent = accent;
+        }
+        spans.push(span(RIGHT_CURVE, accent_fg(previous_accent)));
+    }
+    spans
+}
+
 fn pad_segment_span(accent: Color) -> Span<'static> {
     let mut span: Span<'static> = " ".into();
     apply_segment_fill(&mut span, accent);
@@ -975,95 +1048,6 @@ fn truncate_graphemes(text: &str, max_graphemes: usize) -> String {
     let mut truncated = graphemes[..max_graphemes - 1].concat();
     truncated.push('…');
     truncated
-}
-
-fn marquee_text(label: &str, state: &StatusLineRunState, now: Instant) -> String {
-    if STATUS_CAPSULE_TEXT_WIDTH == 0 {
-        return String::new();
-    }
-    let label_width = UnicodeWidthStr::width(label);
-    let offset = if label_width > STATUS_CAPSULE_TEXT_WIDTH {
-        let elapsed = now.saturating_duration_since(state.status_changed_at);
-        let max_offset = label_width - STATUS_CAPSULE_TEXT_WIDTH;
-        marquee_offset(elapsed, max_offset)
-    } else {
-        0
-    };
-    slice_text_segment(label, offset, STATUS_CAPSULE_TEXT_WIDTH)
-}
-
-fn marquee_offset(elapsed: Duration, max_offset: usize) -> usize {
-    if max_offset == 0 {
-        return 0;
-    }
-    let step_millis = elapsed.as_millis() / u128::from(MARQUEE_STEP_MS);
-    let step = usize::try_from(step_millis).unwrap_or(usize::MAX);
-    let span = max_offset.saturating_mul(2);
-    if span == 0 {
-        return 0;
-    }
-    let position = step % span;
-    if position < max_offset {
-        position
-    } else {
-        span - position
-    }
-}
-
-fn slice_text_segment(text: &str, start_cols: usize, width_cols: usize) -> String {
-    if width_cols == 0 {
-        return String::new();
-    }
-    let graphemes: Vec<&str> = text.graphemes(true).collect();
-    if graphemes.is_empty() {
-        return " ".repeat(width_cols);
-    }
-    let widths: Vec<usize> = graphemes
-        .iter()
-        .map(|g| UnicodeWidthStr::width(*g))
-        .collect();
-
-    let mut consumed = 0;
-    let mut start_index = 0;
-    while start_index < widths.len() && consumed + widths[start_index] <= start_cols {
-        consumed += widths[start_index];
-        start_index += 1;
-    }
-    if start_index >= widths.len() {
-        return " ".repeat(width_cols);
-    }
-    if consumed < start_cols {
-        start_index += 1;
-        if start_index >= widths.len() {
-            return " ".repeat(width_cols);
-        }
-    }
-
-    let mut result = String::new();
-    let mut used = 0;
-    for idx in start_index..graphemes.len() {
-        let g = graphemes[idx];
-        let g_width = widths[idx];
-        if g_width > width_cols && used == 0 {
-            return " ".repeat(width_cols);
-        }
-        if used + g_width > width_cols {
-            break;
-        }
-        result.push_str(g);
-        used += g_width;
-        if used == width_cols {
-            break;
-        }
-    }
-    if used < width_cols {
-        result.push_str(&" ".repeat(width_cols - used));
-    }
-    if result.is_empty() {
-        " ".repeat(width_cols)
-    } else {
-        result
-    }
 }
 
 fn queue_preview(commands: &[String]) -> (String, usize) {
