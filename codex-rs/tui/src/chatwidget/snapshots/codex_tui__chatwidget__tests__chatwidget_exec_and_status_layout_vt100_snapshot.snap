@@ -5,7 +5,7 @@ expression: term.backend().vt100().screen().contents()
 • I’m going to search the repo for where “Change Approved” is rendered to update
   that view.
 
-    Read diff_render.rs
+
  󰔟 0s • Investigating rendering code 
 
 

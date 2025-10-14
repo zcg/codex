@@ -21,6 +21,7 @@ use codex_core::model_family::find_family_for_model;
 use codex_core::protocol::SessionSource;
 use codex_core::protocol::TokenUsage;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
+use codex_core::workspace_state;
 use codex_protocol::ConversationId;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
@@ -337,8 +338,14 @@ impl App {
             }
             AppEvent::PersistModelSelection { model, effort } => {
                 let profile = self.active_profile.as_deref();
-                match persist_model_selection(&self.config.codex_home, profile, &model, effort)
-                    .await
+                match persist_model_selection(
+                    &self.config.codex_home,
+                    &self.config.cwd,
+                    profile,
+                    &model,
+                    effort,
+                )
+                .await
                 {
                     Ok(()) => {
                         let effort_label = effort
@@ -373,6 +380,9 @@ impl App {
                         }
                     }
                 }
+            }
+            AppEvent::ToggleMcpServer { server, enabled } => {
+                self.handle_toggle_mcp_server(server, enabled);
             }
             AppEvent::UpdateAskForApprovalPolicy(policy) => {
                 self.chat_widget.set_approval_policy(policy);
@@ -410,6 +420,38 @@ impl App {
             },
         }
         Ok(true)
+    }
+
+    fn handle_toggle_mcp_server(&mut self, server: String, enabled: bool) {
+        if !self.config.mcp_servers.contains_key(&server) {
+            self.chat_widget
+                .add_error_message(format!("No MCP server named `{server}` configured."));
+            return;
+        }
+
+        if let Some(cfg) = self.config.mcp_servers.get_mut(&server) {
+            cfg.enabled = enabled;
+        }
+        self.chat_widget.set_mcp_enabled(&server, enabled);
+
+        match workspace_state::persist_mcp_enabled(
+            &self.config.codex_home,
+            &self.config.cwd,
+            &server,
+            enabled,
+        ) {
+            Ok(()) => {
+                let status = if enabled { "Enabled" } else { "Disabled" };
+                self.chat_widget.add_info_message(
+                    format!("{status} MCP server `{server}` for this workspace."),
+                    Some("Restart Codex to apply changes.".to_string()),
+                );
+            }
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to update MCP state: {err}"));
+            }
+        }
     }
 
     pub(crate) fn token_usage(&self) -> codex_core::protocol::TokenUsage {

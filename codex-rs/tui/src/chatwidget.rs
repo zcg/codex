@@ -12,6 +12,7 @@ use std::fs;
 use lazy_static::lazy_static;
 
 use codex_core::config::Config;
+use codex_core::config_types::McpServerTransportConfig;
 use codex_core::config_types::Notifications;
 use codex_core::git_info::collect_git_info;
 use codex_core::git_info::current_branch_name;
@@ -63,6 +64,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
+use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
@@ -98,6 +100,8 @@ use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
 use crate::statusline::StatusLineGitSnapshot;
 use crate::statusline::StatusLineState;
+use crate::style::user_message_style;
+use crate::terminal_palette;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 mod interrupts;
@@ -373,6 +377,12 @@ impl ChatWidget {
 
     pub(crate) fn update_statusline_kube_context(&mut self, context: Option<String>) {
         self.status_line.set_kubernetes_context(context);
+    }
+
+    pub(crate) fn set_mcp_enabled(&mut self, server: &str, enabled: bool) {
+        if let Some(cfg) = self.config.mcp_servers.get_mut(server) {
+            cfg.enabled = enabled;
+        }
     }
 
     // --- Small event handlers ---
@@ -941,7 +951,7 @@ impl ChatWidget {
         self.status_line.update_run_header("Working");
     }
 
-    fn layout_areas(&self, area: Rect) -> [Rect; 6] {
+    fn layout_areas(&self, area: Rect) -> [Rect; 7] {
         let header_height = 0u16;
         let has_active_view = self.bottom_pane.has_active_view();
         let status_height = if area.height > 0 { 1 } else { 0 };
@@ -953,6 +963,12 @@ impl ChatWidget {
         } else {
             0
         };
+        let pill_margin_height = if pill_height > 0 && remaining > pill_height {
+            1
+        } else {
+            0
+        };
+        remaining = remaining.saturating_sub(pill_margin_height);
         remaining = remaining.saturating_sub(pill_height);
 
         let bottom_desired = self.bottom_pane.desired_height(area.width);
@@ -975,6 +991,7 @@ impl ChatWidget {
         Layout::vertical([
             Constraint::Length(header_height),
             Constraint::Length(active_height),
+            Constraint::Length(pill_margin_height),
             Constraint::Length(pill_height),
             Constraint::Length(bottom_height),
             Constraint::Length(spacer_height),
@@ -1281,6 +1298,12 @@ impl ChatWidget {
             }
             SlashCommand::Mcp => {
                 self.add_mcp_output();
+            }
+            SlashCommand::Enable => {
+                self.open_mcp_toggle_popup(true);
+            }
+            SlashCommand::Disable => {
+                self.open_mcp_toggle_popup(false);
             }
             #[cfg(debug_assertions)]
             SlashCommand::TestApproval => {
@@ -1995,6 +2018,82 @@ impl ChatWidget {
         }
     }
 
+    fn open_mcp_toggle_popup(&mut self, enable: bool) {
+        let mut servers: Vec<_> = self
+            .config
+            .mcp_servers
+            .iter()
+            .filter(|(_, cfg)| cfg.enabled != enable)
+            .collect();
+        servers.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        if servers.is_empty() {
+            let message = if enable {
+                "All MCP servers are already enabled."
+            } else {
+                "No enabled MCP servers to disable."
+            };
+            self.add_info_message(
+                message.to_string(),
+                Some("Use /mcp to review configured servers.".to_string()),
+            );
+            return;
+        }
+
+        let mut items: Vec<SelectionItem> = Vec::new();
+        for (name, cfg) in servers {
+            let description = match &cfg.transport {
+                McpServerTransportConfig::Stdio { command, args, .. } => {
+                    if args.is_empty() {
+                        format!("launch: {command}")
+                    } else {
+                        format!("launch: {command} {}", args.join(" "))
+                    }
+                }
+                McpServerTransportConfig::StreamableHttp { url, .. } => {
+                    format!("url: {url}")
+                }
+            };
+
+            let server_name = name.clone();
+            let action_enabled = enable;
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::ToggleMcpServer {
+                    server: server_name.clone(),
+                    enabled: action_enabled,
+                });
+            })];
+
+            items.push(SelectionItem {
+                name: name.clone(),
+                description: Some(description),
+                is_current: false,
+                actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        let title = if enable {
+            "Enable MCP Server"
+        } else {
+            "Disable MCP Server"
+        };
+        let subtitle = if enable {
+            "Select a server to enable for this workspace."
+        } else {
+            "Select a server to disable for this workspace."
+        };
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some(title.to_string()),
+            subtitle: Some(subtitle.to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
+    }
+
     /// Forward file-search results to the bottom pane.
     pub(crate) fn apply_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
         self.bottom_pane.on_file_search_result(query, matches);
@@ -2256,7 +2355,7 @@ impl ChatWidget {
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        let [_, _, _, bottom_pane_area, _, _] = self.layout_areas(area);
+        let [_, _, _, _, bottom_pane_area, _, _] = self.layout_areas(area);
         self.bottom_pane.cursor_pos(bottom_pane_area)
     }
 }
@@ -2266,6 +2365,7 @@ impl WidgetRef for &ChatWidget {
         let [
             _,
             active_cell_area,
+            pill_margin_area,
             pill_area,
             bottom_pane_area,
             spacer_area,
@@ -2285,6 +2385,9 @@ impl WidgetRef for &ChatWidget {
                 tool.render_ref(area, buf);
             }
         }
+        if !pill_margin_area.is_empty() {
+            Paragraph::new("").render(pill_margin_area, buf);
+        }
         if !pill_area.is_empty() {
             if has_active_view {
                 Paragraph::new("").render(pill_area, buf);
@@ -2294,7 +2397,12 @@ impl WidgetRef for &ChatWidget {
             }
         }
         if !spacer_area.is_empty() {
-            Paragraph::new("").render(spacer_area, buf);
+            if has_active_view {
+                Paragraph::new("").render(spacer_area, buf);
+            } else {
+                let style = user_message_style(terminal_palette::default_bg());
+                Block::default().style(style).render(spacer_area, buf);
+            }
         }
         if !status_area.is_empty() {
             if has_active_view {

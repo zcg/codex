@@ -62,6 +62,12 @@ pub(crate) enum AppEvent {
         effort: Option<ReasoningEffort>,
     },
 
+    /// Toggle an MCP server's enabled state for the current workspace.
+    ToggleMcpServer {
+        server: String,
+        enabled: bool,
+    },
+
     /// Open the reasoning selection popup after picking a model.
     OpenReasoningPopup {
         model: String,

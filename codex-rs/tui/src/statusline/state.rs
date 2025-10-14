@@ -294,14 +294,16 @@ impl RunTimer {
 
     fn snapshot(&self, now: Instant) -> RunTimerSnapshot {
         let mut elapsed = self.elapsed_running;
-        if !self.is_paused
-            && let Some(last) = self.last_resume_at
-        {
-            elapsed += now.saturating_duration_since(last);
+        let mut last_resume = self.last_resume_at;
+        if !self.is_paused {
+            if let Some(last) = self.last_resume_at {
+                elapsed += now.saturating_duration_since(last);
+            }
+            last_resume = Some(now);
         }
         RunTimerSnapshot {
             elapsed_running: elapsed,
-            last_resume_at: self.last_resume_at,
+            last_resume_at: last_resume,
             is_paused: self.is_paused,
         }
     }
@@ -380,5 +382,18 @@ mod tests {
         assert_eq!(context.window, window);
         assert_eq!(context.tokens_in_context, 98_300);
         assert_eq!(context.percent_remaining, 66);
+    }
+
+    #[test]
+    fn run_timer_snapshot_advances_in_real_seconds() {
+        let start = Instant::now();
+        let timer = RunTimer::new(start);
+        let first_tick = start + Duration::from_millis(1_200);
+        let snapshot = timer.snapshot(first_tick);
+        assert_eq!(snapshot.elapsed_running.as_millis(), 1_200);
+        assert_eq!(snapshot.elapsed_at(first_tick).as_secs(), 1);
+
+        let later = first_tick + Duration::from_millis(1_000);
+        assert_eq!(snapshot.elapsed_at(later).as_secs(), 2);
     }
 }

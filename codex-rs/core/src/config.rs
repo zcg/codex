@@ -26,6 +26,7 @@ use crate::model_provider_info::built_in_model_providers;
 use crate::openai_model_info::get_model_info;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
+use crate::workspace_state;
 use anyhow::Context;
 use codex_app_server_protocol::Tools;
 use codex_app_server_protocol::UserSavedConfig;
@@ -48,6 +49,7 @@ use toml_edit::Array as TomlArray;
 use toml_edit::DocumentMut;
 use toml_edit::Item as TomlItem;
 use toml_edit::Table as TomlTable;
+use tracing::warn;
 
 #[cfg(target_os = "windows")]
 pub const OPENAI_DEFAULT_MODEL: &str = "gpt-5";
@@ -590,7 +592,7 @@ fn ensure_profile_table<'a>(
 }
 
 // TODO(jif) refactor config persistence.
-pub async fn persist_model_selection(
+async fn persist_model_selection_config_only(
     codex_home: &Path,
     active_profile: Option<&str>,
     model: &str,
@@ -648,6 +650,33 @@ pub async fn persist_model_selection(
         .with_context(|| format!("failed to persist config.toml at {}", config_path.display()))?;
 
     Ok(())
+}
+
+pub async fn persist_model_selection(
+    codex_home: &Path,
+    workspace: &Path,
+    active_profile: Option<&str>,
+    model: &str,
+    effort: Option<ReasoningEffort>,
+) -> anyhow::Result<()> {
+    let config_result =
+        persist_model_selection_config_only(codex_home, active_profile, model, effort).await;
+    let state_result =
+        workspace_state::persist_model_selection(codex_home, workspace, model, effort)
+            .map_err(anyhow::Error::from);
+
+    match (config_result, state_result) {
+        (Ok(_), Ok(_)) => Ok(()),
+        (Ok(_), Err(state_err)) => Err(state_err),
+        (Err(config_err), Ok(_)) => {
+            warn!("Failed to update config.toml: {config_err:#}");
+            Ok(())
+        }
+        (Err(config_err), Err(state_err)) => {
+            warn!("Failed to update config.toml: {config_err:#}");
+            Err(state_err)
+        }
+    }
 }
 
 /// Apply a single dotted-path override onto a TOML value.
@@ -1048,6 +1077,21 @@ impl Config {
             }
         };
 
+        let workspace_state =
+            match workspace_state::load_workspace_state(&codex_home, &resolved_cwd) {
+                Ok(state) => state,
+                Err(err) => {
+                    warn!(
+                        "Failed to load workspace state for {}: {err}",
+                        resolved_cwd.display()
+                    );
+                    workspace_state::WorkspaceState::default()
+                }
+            };
+
+        let workspace_model_override = workspace_state.model.clone();
+        let workspace_effort_override = workspace_state.model_reasoning_effort;
+
         let history = cfg.history.unwrap_or_default();
 
         let tools_web_search_request = override_tools_web_search_request
@@ -1059,6 +1103,7 @@ impl Config {
             .unwrap_or(true);
 
         let model = model
+            .or(workspace_model_override.clone())
             .or(config_profile.model)
             .or(cfg.model)
             .unwrap_or_else(default_model);
@@ -1104,6 +1149,19 @@ impl Config {
             .or(cfg.review_model)
             .unwrap_or_else(default_review_model);
 
+        let mut mcp_servers = cfg.mcp_servers;
+        for (server_name, server_state) in workspace_state.mcp_servers.iter() {
+            if let Some(server_cfg) = mcp_servers.get_mut(server_name) {
+                if let Some(enabled) = server_state.enabled {
+                    server_cfg.enabled = enabled;
+                }
+            }
+        }
+
+        let model_reasoning_effort = workspace_effort_override
+            .or(config_profile.model_reasoning_effort)
+            .or(cfg.model_reasoning_effort);
+
         let config = Self {
             model,
             review_model,
@@ -1123,7 +1181,7 @@ impl Config {
             notify: cfg.notify,
             user_instructions,
             base_instructions,
-            mcp_servers: cfg.mcp_servers,
+            mcp_servers,
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.
             mcp_oauth_credentials_store_mode: cfg.mcp_oauth_credentials_store.unwrap_or_default(),
@@ -1152,9 +1210,7 @@ impl Config {
                 .show_raw_agent_reasoning
                 .or(show_raw_agent_reasoning)
                 .unwrap_or(false),
-            model_reasoning_effort: config_profile
-                .model_reasoning_effort
-                .or(cfg.model_reasoning_effort),
+            model_reasoning_effort,
             model_reasoning_summary: config_profile
                 .model_reasoning_summary
                 .or(cfg.model_reasoning_summary)
@@ -1807,6 +1863,7 @@ url = "https://example.com/mcp"
 
         persist_model_selection(
             codex_home.path(),
+            codex_home.path(),
             None,
             "gpt-5-codex",
             Some(ReasoningEffort::High),
@@ -1842,6 +1899,7 @@ model = "gpt-4.1"
 
         persist_model_selection(
             codex_home.path(),
+            codex_home.path(),
             None,
             "o4-mini",
             Some(ReasoningEffort::High),
@@ -1869,6 +1927,7 @@ model = "gpt-4.1"
         let codex_home = TempDir::new()?;
 
         persist_model_selection(
+            codex_home.path(),
             codex_home.path(),
             Some("dev"),
             "gpt-5-codex",
@@ -1913,6 +1972,7 @@ model = "gpt-5-codex"
 
         persist_model_selection(
             codex_home.path(),
+            codex_home.path(),
             Some("dev"),
             "o4-high",
             Some(ReasoningEffort::Medium),
@@ -1938,6 +1998,60 @@ model = "gpt-5-codex"
                 .get("prod")
                 .and_then(|profile| profile.model.as_deref()),
             Some("gpt-5-codex"),
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_state_overrides_model_and_mcp() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let workspace = TempDir::new()?;
+
+        let mut cfg = ConfigToml::default();
+        cfg.model = Some("gpt-5-codex".to_string());
+        let mut servers = HashMap::new();
+        servers.insert(
+            "docs".to_string(),
+            McpServerConfig {
+                transport: McpServerTransportConfig::Stdio {
+                    command: "docs-server".to_string(),
+                    args: Vec::new(),
+                    env: None,
+                },
+                enabled: true,
+                startup_timeout_sec: None,
+                tool_timeout_sec: None,
+            },
+        );
+        cfg.mcp_servers = servers;
+
+        workspace_state::persist_model_selection(
+            codex_home.path(),
+            workspace.path(),
+            "o4-high",
+            Some(ReasoningEffort::Medium),
+        )?;
+        workspace_state::persist_mcp_enabled(codex_home.path(), workspace.path(), "docs", false)?;
+
+        let mut overrides = ConfigOverrides::default();
+        overrides.cwd = Some(workspace.path().to_path_buf());
+
+        let config = Config::load_from_base_config_with_overrides(
+            cfg,
+            overrides,
+            codex_home.path().to_path_buf(),
+        )?;
+
+        assert_eq!(config.model, "o4-high");
+        assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::Medium));
+        assert_eq!(
+            config
+                .mcp_servers
+                .get("docs")
+                .expect("docs server should exist")
+                .enabled,
+            false
         );
 
         Ok(())

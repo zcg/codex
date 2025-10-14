@@ -23,6 +23,8 @@ pub enum SlashCommand {
     Mention,
     Status,
     Mcp,
+    Enable,
+    Disable,
     Logout,
     Quit,
     #[cfg(debug_assertions)]
@@ -45,6 +47,8 @@ impl SlashCommand {
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Approvals => "choose what Codex can do without approval",
             SlashCommand::Mcp => "list configured MCP tools",
+            SlashCommand::Enable => "enable a disabled MCP server",
+            SlashCommand::Disable => "disable an enabled MCP server",
             SlashCommand::Logout => "log out of Codex",
             #[cfg(debug_assertions)]
             SlashCommand::TestApproval => "test approval request",
@@ -66,6 +70,8 @@ impl SlashCommand {
             | SlashCommand::Undo
             | SlashCommand::Model
             | SlashCommand::Approvals
+            | SlashCommand::Enable
+            | SlashCommand::Disable
             | SlashCommand::Review
             | SlashCommand::Logout => false,
             SlashCommand::Diff
