@@ -64,7 +64,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
-use ratatui::widgets::Block;
+use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
@@ -100,8 +100,6 @@ use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
 use crate::statusline::StatusLineGitSnapshot;
 use crate::statusline::StatusLineState;
-use crate::style::user_message_style;
-use crate::terminal_palette;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 mod interrupts;
@@ -2386,28 +2384,25 @@ impl WidgetRef for &ChatWidget {
             }
         }
         if !pill_margin_area.is_empty() {
-            Paragraph::new("").render(pill_margin_area, buf);
+            Clear.render(pill_margin_area, buf);
         }
         if !pill_area.is_empty() {
             if has_active_view {
-                Paragraph::new("").render(pill_area, buf);
+                Clear.render(pill_area, buf);
             } else {
+                Clear.render(pill_area, buf);
                 let line = self.status_line.render_run_pill(pill_area.width);
                 Paragraph::new(line).render(pill_area, buf);
             }
         }
         if !spacer_area.is_empty() {
-            if has_active_view {
-                Paragraph::new("").render(spacer_area, buf);
-            } else {
-                let style = user_message_style(terminal_palette::default_bg());
-                Block::default().style(style).render(spacer_area, buf);
-            }
+            Clear.render(spacer_area, buf);
         }
         if !status_area.is_empty() {
             if has_active_view {
-                Paragraph::new("").render(status_area, buf);
+                Clear.render(status_area, buf);
             } else {
+                Clear.render(status_area, buf);
                 let line = self.status_line.render_line(status_area.width);
                 Paragraph::new(line).render(status_area, buf);
             }

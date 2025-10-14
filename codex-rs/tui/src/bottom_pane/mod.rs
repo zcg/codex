@@ -2,6 +2,8 @@
 use std::path::PathBuf;
 
 use crate::app_event_sender::AppEventSender;
+use crate::style::user_message_style;
+use crate::terminal_palette;
 use crate::tui::FrameRequester;
 use bottom_pane_view::BottomPaneView;
 use codex_file_search::FileMatch;
@@ -9,6 +11,7 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::widgets::Block;
 use ratatui::widgets::WidgetRef;
 use std::time::Duration;
 
@@ -118,29 +121,46 @@ impl BottomPane {
             .saturating_add(top_margin)
     }
 
-    fn layout(&self, area: Rect) -> [Rect; 2] {
-        // At small heights, bottom pane takes the entire height.
-        let (top_margin, bottom_margin) = if area.height <= BottomPane::BOTTOM_PAD_LINES + 1 {
+    fn layout(&self, area: Rect) -> [Rect; 3] {
+        if area.height == 0 {
+            return [Rect::ZERO, Rect::ZERO, Rect::ZERO];
+        }
+        // At small heights, dedicate all space to the content.
+        let (top_margin, bottom_margin) = if area.height <= Self::BOTTOM_PAD_LINES + 1 {
             (0, 0)
         } else {
-            (1, BottomPane::BOTTOM_PAD_LINES)
+            (1, Self::BOTTOM_PAD_LINES.min(area.height.saturating_sub(1)))
         };
 
-        let area = Rect {
-            x: area.x,
-            y: area.y + top_margin,
-            width: area.width,
-            height: area.height - top_margin - bottom_margin,
-        };
+        let content_height = area
+            .height
+            .saturating_sub(top_margin)
+            .saturating_sub(bottom_margin);
 
-        [Rect::ZERO, area]
+        let top = Rect::new(area.x, area.y, area.width, top_margin);
+        let content = Rect::new(
+            area.x,
+            area.y.saturating_add(top_margin),
+            area.width,
+            content_height,
+        );
+        let bottom = Rect::new(
+            area.x,
+            area.y
+                .saturating_add(top_margin)
+                .saturating_add(content_height),
+            area.width,
+            bottom_margin,
+        );
+
+        [top, content, bottom]
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         // Hide the cursor whenever an overlay view is active. In these
         // states the textarea is not interactable, so we should not show its
         // caret.
-        let [_, content] = self.layout(area);
+        let [_, content, _] = self.layout(area);
         if let Some(view) = self.active_view() {
             view.cursor_pos(content)
         } else {
@@ -394,12 +414,26 @@ impl BottomPane {
 
 impl WidgetRef for &BottomPane {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let [_, content] = self.layout(area);
+        let [top_margin, content, bottom_margin] = self.layout(area);
+        let fill_style = user_message_style(terminal_palette::default_bg());
+        if !top_margin.is_empty() {
+            Block::default()
+                .style(fill_style)
+                .render_ref(top_margin, buf);
+        }
 
-        if let Some(view) = self.active_view() {
-            view.render(content, buf);
-        } else {
-            self.composer.render_ref(content, buf);
+        if !content.is_empty() {
+            if let Some(view) = self.active_view() {
+                view.render(content, buf);
+            } else {
+                self.composer.render_ref(content, buf);
+            }
+        }
+
+        if !bottom_margin.is_empty() {
+            Block::default()
+                .style(fill_style)
+                .render_ref(bottom_margin, buf);
         }
     }
 }

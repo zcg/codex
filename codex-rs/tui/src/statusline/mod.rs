@@ -942,12 +942,7 @@ impl<'a> RenderModel<'a> {
 }
 
 fn degrade_run_capsule(model: &mut RenderModel<'_>) -> bool {
-    const OPS: &[DegradeOp] = &[
-        DegradeOp::DropQueuePreview,
-        DegradeOp::HideRunTimer,
-        DegradeOp::ShortenRunLabel,
-        DegradeOp::HideRunLabel,
-    ];
+    const OPS: &[DegradeOp] = &[DegradeOp::DropQueuePreview, DegradeOp::HideRunTimer];
     for op in OPS {
         if model.apply_degrade(*op) {
             return true;

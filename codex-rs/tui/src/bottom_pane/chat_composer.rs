@@ -1529,20 +1529,19 @@ impl WidgetRef for ChatComposer {
             }
         }
         let style = user_message_style(terminal_palette::default_bg());
-        let mut block_rect = composer_rect;
-        block_rect.y = composer_rect.y.saturating_sub(1);
-        block_rect.height = composer_rect.height.saturating_add(1);
-        Block::default().style(style).render_ref(block_rect, buf);
-        buf.set_span(
-            composer_rect.x,
-            composer_rect.y,
-            &"›".bold(),
-            composer_rect.width,
-        );
+        if !composer_rect.is_empty() {
+            Block::default().style(style).render_ref(composer_rect, buf);
+            buf.set_span(
+                composer_rect.x,
+                composer_rect.y,
+                &"›".bold(),
+                composer_rect.width,
+            );
+        }
 
         let mut state = self.textarea_state.borrow_mut();
         StatefulWidgetRef::render_ref(&(&self.textarea), textarea_rect, buf, &mut state);
-        if self.textarea.text().is_empty() {
+        if !textarea_rect.is_empty() && self.textarea.text().is_empty() {
             let placeholder = Span::from(self.placeholder_text.as_str()).dim();
             Line::from(vec![placeholder]).render_ref(textarea_rect.inner(Margin::new(0, 0)), buf);
         }
