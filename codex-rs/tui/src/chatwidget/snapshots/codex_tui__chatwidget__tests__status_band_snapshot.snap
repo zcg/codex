@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests.rs
+expression: "captured.join(\"\\n\")"
+---
+› Summarize recent commits
+
+
+ tui  󱚥 gpt-5-codex        vermissian   feature/status-polish…   prod 

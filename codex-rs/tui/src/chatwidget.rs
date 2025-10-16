@@ -100,6 +100,7 @@ use crate::markdown::append_markdown;
 use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
 use crate::statusline::StatusLineGitSnapshot;
+use crate::statusline::StatusLineRenderer;
 use crate::statusline::StatusLineState;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
@@ -236,6 +237,7 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) initial_images: Vec<PathBuf>,
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) auth_manager: Arc<AuthManager>,
+    pub(crate) status_renderer: Option<Box<dyn StatusLineRenderer>>,
 }
 
 pub(crate) struct ChatWidget {
@@ -413,6 +415,10 @@ impl ChatWidget {
 
     pub(crate) fn update_statusline_kube_context(&mut self, context: Option<String>) {
         self.status_line.set_kubernetes_context(context);
+    }
+
+    pub(crate) fn set_status_renderer(&mut self, renderer: Box<dyn StatusLineRenderer>) {
+        self.status_line.set_renderer(renderer);
     }
 
     pub(crate) fn set_mcp_enabled(&mut self, server: &str, enabled: bool) {
@@ -1096,6 +1102,26 @@ impl ChatWidget {
         .areas(area)
     }
 
+    #[cfg(test)]
+    pub(crate) fn debug_layout_heights(&self, width: u16, height: u16) -> [u16; 8] {
+        let areas = self.layout_areas(Rect::new(0, 0, width, height));
+        [
+            areas[0].height,
+            areas[1].height,
+            areas[2].height,
+            areas[3].height,
+            areas[4].height,
+            areas[5].height,
+            areas[6].height,
+            areas[7].height,
+        ]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn status_line_mut(&mut self) -> &mut StatusLineState {
+        &mut self.status_line
+    }
+
     pub(crate) fn new(
         common: ChatWidgetInit,
         conversation_manager: Arc<ConversationManager>,
@@ -1108,6 +1134,7 @@ impl ChatWidget {
             initial_images,
             enhanced_keys_supported,
             auth_manager,
+            status_renderer,
         } = common;
         let mut rng = rand::rng();
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
@@ -1161,6 +1188,10 @@ impl ChatWidget {
             last_rendered_width: std::cell::Cell::new(None),
         };
 
+        if let Some(renderer) = status_renderer {
+            widget.set_status_renderer(renderer);
+        }
+
         widget.bootstrap_status_line();
         widget.ensure_initial_session_header();
         widget
@@ -1180,6 +1211,7 @@ impl ChatWidget {
             initial_images,
             enhanced_keys_supported,
             auth_manager,
+            status_renderer,
         } = common;
         let mut rng = rand::rng();
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
@@ -1234,6 +1266,10 @@ impl ChatWidget {
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
         };
+
+        if let Some(renderer) = status_renderer {
+            widget.set_status_renderer(renderer);
+        }
 
         widget.bootstrap_status_line();
         widget.ensure_initial_session_header();

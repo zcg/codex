@@ -521,4 +521,52 @@ mod tests {
             "composer placeholder should be visible while task running"
         );
     }
+
+    #[test]
+    fn layout_reserves_single_line_margins() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
+            disable_paste_burst: false,
+        });
+
+        let area = Rect::new(0, 0, 72, 10);
+        let [top, content, bottom] = pane.layout(area);
+        assert_eq!(top.height, 1, "top margin should occupy exactly one row");
+        assert!(content.height >= 1, "content should retain non-zero height");
+        assert_eq!(
+            bottom.height, 1,
+            "bottom margin should occupy exactly one row when space allows"
+        );
+    }
+
+    #[test]
+    fn layout_compacts_when_height_is_limited() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
+            disable_paste_burst: false,
+        });
+
+        let area = Rect::new(0, 0, 72, 2);
+        let [top, content, bottom] = pane.layout(area);
+        assert!(
+            top.height + content.height + bottom.height <= 2,
+            "layout should not overflow the provided height"
+        );
+        assert!(
+            bottom.height == 0 || top.height == 0,
+            "one of the margins should collapse when space is tight"
+        );
+    }
 }

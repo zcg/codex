@@ -1,8 +1,12 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::bottom_pane::SelectionViewParams;
 use crate::chatwidget::clear_devspace_override_for_tests;
 use crate::chatwidget::set_devspace_override_for_tests;
+use crate::statusline::CustomStatusLineRenderer;
+use crate::statusline::StatusLineGitSnapshot;
+use crate::statusline::StatusLineSnapshot;
 use crate::statusline::StatusLineState;
 use crate::test_backend::VT100Backend;
 use crate::tui::FrameRequester;
@@ -37,6 +41,8 @@ use codex_core::protocol::ReviewRequest;
 use codex_core::protocol::StreamErrorEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TaskStartedEvent;
+use codex_core::protocol::TokenUsage;
+use codex_core::protocol::TokenUsageInfo;
 use codex_core::protocol::ViewImageToolCallEvent;
 use codex_protocol::ConversationId;
 use codex_protocol::plan_tool::PlanItemArg;
@@ -51,6 +57,7 @@ use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::time::Instant;
 use tempfile::NamedTempFile;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::unbounded_channel;
@@ -236,6 +243,7 @@ async fn helpers_are_available_and_do_not_panic() {
         initial_images: Vec::new(),
         enhanced_keys_supported: false,
         auth_manager,
+        status_renderer: Some(Box::new(CustomStatusLineRenderer)),
     };
     let mut w = ChatWidget::new(init, conversation_manager);
     // Basic construction sanity.
@@ -387,6 +395,140 @@ fn test_rate_limit_warnings_monthly() {
         ),],
         "expected one warning per limit for the highest crossed threshold"
     );
+}
+
+#[test]
+fn layout_idle_has_expected_status_spacing() {
+    let (chat, _rx, _op_rx) = make_chatwidget_manual();
+    let heights = chat.debug_layout_heights(80, 24);
+    assert_eq!(heights[2], 1, "pill margin should be a single line");
+    assert_eq!(heights[3], 1, "status pill should occupy one line");
+    assert_eq!(heights[4], 1, "composer gap should remain a single spacer");
+    assert_eq!(
+        heights[6], 0,
+        "status gap should be removed when composer is visible"
+    );
+    assert_eq!(
+        heights[7], 1,
+        "status line should always be exactly one row tall"
+    );
+}
+
+#[test]
+fn layout_modal_removes_pill_spacing() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
+    chat.bottom_pane.show_selection_view(SelectionViewParams {
+        title: Some("Test Modal".to_string()),
+        ..Default::default()
+    });
+    let heights = chat.debug_layout_heights(80, 24);
+    assert_eq!(
+        heights[3], 0,
+        "pill should not render when a modal is active"
+    );
+    assert!(
+        heights[2] <= 1,
+        "pill margin should not exceed a single spacer during modal overlays"
+    );
+}
+
+#[test]
+fn status_renderer_can_be_swapped_at_runtime() {
+    #[derive(Debug)]
+    struct TestRenderer;
+
+    impl super::StatusLineRenderer for TestRenderer {
+        fn render(
+            &self,
+            _snapshot: &StatusLineSnapshot,
+            _width: u16,
+            _now: Instant,
+        ) -> ratatui::text::Line<'static> {
+            ratatui::text::Line::from("plugin-status")
+        }
+
+        fn render_run_pill(
+            &self,
+            _snapshot: &StatusLineSnapshot,
+            _width: u16,
+            _now: Instant,
+        ) -> ratatui::text::Line<'static> {
+            ratatui::text::Line::from("plugin-pill")
+        }
+    }
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
+    chat.set_status_renderer(Box::new(TestRenderer));
+
+    let (line, pill) = {
+        let status = chat.status_line_mut();
+        let line = status.render_line(40);
+        let pill = status.render_run_pill(40);
+        (line, pill)
+    };
+
+    assert_eq!(line, ratatui::text::Line::from("plugin-status"));
+    assert_eq!(pill, ratatui::text::Line::from("plugin-pill"));
+}
+
+#[test]
+fn status_band_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
+
+    chat.update_statusline_git(Some(StatusLineGitSnapshot {
+        branch: Some("feature/status-polish".to_string()),
+        dirty: true,
+        ahead: Some(2),
+        behind: Some(1),
+    }));
+    chat.status_line_mut()
+        .set_hostname(Some("vermissian".to_string()));
+    chat.status_line_mut()
+        .set_aws_profile(Some("prod".to_string()));
+    chat.status_line_mut()
+        .update_run_header("Investigating rendering code");
+    let token_info = TokenUsageInfo {
+        total_token_usage: TokenUsage {
+            input_tokens: 1280,
+            cached_input_tokens: 0,
+            output_tokens: 512,
+            reasoning_output_tokens: 0,
+            total_tokens: 1792,
+        },
+        last_token_usage: TokenUsage {
+            input_tokens: 120,
+            cached_input_tokens: 0,
+            output_tokens: 64,
+            reasoning_output_tokens: 0,
+            total_tokens: 184,
+        },
+        model_context_window: Some(4096),
+    };
+    chat.status_line_mut().update_tokens(Some(token_info));
+    chat.bottom_pane
+        .set_composer_text("Summarize recent commits".to_string());
+
+    let width = 80;
+    let height = 8;
+    let area = ratatui::layout::Rect::new(0, 0, width, height);
+    let mut buf = ratatui::buffer::Buffer::empty(area);
+    (&chat).render_ref(area, &mut buf);
+
+    let start_row = area.height.saturating_sub(4);
+    let mut captured = Vec::new();
+    for y in start_row..area.height {
+        let mut line = String::new();
+        for x in 0..area.width {
+            let symbol = buf[(x, y)].symbol();
+            if symbol.is_empty() {
+                line.push(' ');
+            } else {
+                line.push_str(symbol);
+            }
+        }
+        captured.push(line.trim_end().to_string());
+    }
+    assert_snapshot!("status_band_snapshot", captured.join("\n"));
 }
 
 // (removed experimental resize snapshot test)

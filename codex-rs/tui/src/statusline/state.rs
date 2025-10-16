@@ -11,6 +11,7 @@ use codex_core::protocol_config_types::ReasoningEffort;
 use ratatui::text::Line;
 
 use super::DEFAULT_STATUS_MESSAGE;
+use super::DefaultStatusLineRenderer;
 use super::RunTimerSnapshot;
 use super::StatusLineContextSnapshot;
 use super::StatusLineDevspaceSnapshot;
@@ -26,7 +27,7 @@ use super::TokenCountSnapshot;
 pub(crate) struct StatusLineState {
     cwd: PathBuf,
     frame_requester: FrameRequester,
-    renderer: StatusLineRenderer,
+    renderer: Box<dyn StatusLineRenderer>,
     snapshot: StatusLineSnapshot,
     run_timer: Option<RunTimer>,
     queued_messages: Vec<String>,
@@ -36,11 +37,23 @@ pub(crate) struct StatusLineState {
 
 impl StatusLineState {
     pub(crate) fn new(config: &Config, frame_requester: FrameRequester) -> Self {
+        Self::with_renderer(
+            config,
+            frame_requester,
+            Box::<DefaultStatusLineRenderer>::default(),
+        )
+    }
+
+    pub(crate) fn with_renderer(
+        config: &Config,
+        frame_requester: FrameRequester,
+        renderer: Box<dyn StatusLineRenderer>,
+    ) -> Self {
         let cwd = config.cwd.clone();
         let mut state = Self {
             cwd: cwd.clone(),
             frame_requester,
-            renderer: StatusLineRenderer,
+            renderer,
             snapshot: StatusLineSnapshot::default(),
             run_timer: None,
             queued_messages: Vec::new(),
@@ -50,6 +63,11 @@ impl StatusLineState {
         state.set_working_directory(&cwd);
         state.set_idle_run_state(Instant::now());
         state
+    }
+
+    pub(crate) fn set_renderer(&mut self, renderer: Box<dyn StatusLineRenderer>) {
+        self.renderer = renderer;
+        self.request_redraw();
     }
 
     pub(crate) fn set_working_directory(&mut self, cwd: &Path) {

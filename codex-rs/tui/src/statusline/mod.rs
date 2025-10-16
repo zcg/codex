@@ -17,8 +17,10 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 mod palette;
+pub(crate) mod skins;
 pub(crate) mod state;
 
+pub(crate) use skins::CustomStatusLineRenderer;
 pub(crate) use state::StatusLineState;
 
 use palette::BASE;
@@ -57,6 +59,17 @@ const MODEL_ICONS: &[char] = &['󰚩', '󱚝', '󱚟', '󱚡', '󱚣', '󱚥'];
 const DEVSPACE_ICONS: &[&str] = &["󰠖 ", "󰠶 ", "󰋩 ", "󰚌 "];
 const CONTEXT_PADDING: usize = 4;
 const DEFAULT_STATUS_MESSAGE: &str = "Ready when you are";
+
+pub(crate) trait StatusLineRenderer: std::fmt::Debug + Send + Sync {
+    fn render(&self, snapshot: &StatusLineSnapshot, width: u16, now: Instant) -> Line<'static>;
+
+    fn render_run_pill(
+        &self,
+        snapshot: &StatusLineSnapshot,
+        width: u16,
+        now: Instant,
+    ) -> Line<'static>;
+}
 
 fn span<S>(text: S, style: Style) -> Span<'static>
 where
@@ -310,65 +323,81 @@ impl EnvironmentInclusion {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct StatusLineRenderer;
+#[derive(Debug, Default)]
+pub(crate) struct DefaultStatusLineRenderer;
 
-impl StatusLineRenderer {
-    pub fn render(&self, snapshot: &StatusLineSnapshot, width: u16, now: Instant) -> Line<'static> {
-        let mut model = RenderModel::new(snapshot, now);
-        let target_width = width as usize;
-
-        loop {
-            if let Some(line) = model.try_render_line(target_width) {
-                return line;
-            }
-            if !model.apply_next_degrade() {
-                let fallback = model.fallback_line();
-                return truncate_line_to_width(fallback, target_width);
-            }
-        }
+impl StatusLineRenderer for DefaultStatusLineRenderer {
+    fn render(&self, snapshot: &StatusLineSnapshot, width: u16, now: Instant) -> Line<'static> {
+        render_status_line(snapshot, width, now)
     }
 
-    pub fn render_run_pill(
+    fn render_run_pill(
         &self,
         snapshot: &StatusLineSnapshot,
         width: u16,
         now: Instant,
     ) -> Line<'static> {
-        let target_width = width as usize;
-        if target_width == 0 {
-            return Line::from(Vec::<Span<'static>>::new());
+        render_status_run_pill(snapshot, width, now)
+    }
+}
+
+pub(crate) fn render_status_line(
+    snapshot: &StatusLineSnapshot,
+    width: u16,
+    now: Instant,
+) -> Line<'static> {
+    let mut model = RenderModel::new(snapshot, now);
+    let target_width = width as usize;
+
+    loop {
+        if let Some(line) = model.try_render_line(target_width) {
+            return line;
         }
+        if !model.apply_next_degrade() {
+            let fallback = model.fallback_line();
+            return truncate_line_to_width(fallback, target_width);
+        }
+    }
+}
 
-        let mut model = RenderModel::new(snapshot, now);
-        model.path_variant = PathVariant::Hidden;
-        model.token_variant = TokenVariant::Hidden;
-        model.context_variant = ContextVariant::Hidden;
-        model.git_variant = GitVariant::Hidden;
-        model.env = EnvironmentInclusion::empty();
-        model.include_queue_preview = true;
-        model.show_interrupt_hint = false;
+pub(crate) fn render_status_run_pill(
+    snapshot: &StatusLineSnapshot,
+    width: u16,
+    now: Instant,
+) -> Line<'static> {
+    let target_width = width as usize;
+    if target_width == 0 {
+        return Line::from(Vec::<Span<'static>>::new());
+    }
 
-        let mut attempts = 0usize;
-        loop {
-            let segments = model.run_state_segments(snapshot.run_state.as_ref());
-            let spans = capsule_spans(segments);
-            let mut line = Line::from(spans.clone());
-            let display_width = line_display_width(&line);
-            if display_width <= target_width {
-                if display_width < target_width {
-                    let padding = " ".repeat(target_width - display_width);
-                    line.spans.push(Span::raw(padding));
-                }
-                return line;
+    let mut model = RenderModel::new(snapshot, now);
+    model.path_variant = PathVariant::Hidden;
+    model.token_variant = TokenVariant::Hidden;
+    model.context_variant = ContextVariant::Hidden;
+    model.git_variant = GitVariant::Hidden;
+    model.env = EnvironmentInclusion::empty();
+    model.include_queue_preview = true;
+    model.show_interrupt_hint = false;
+
+    let mut attempts = 0usize;
+    loop {
+        let segments = model.run_state_segments(snapshot.run_state.as_ref());
+        let spans = capsule_spans(segments);
+        let mut line = Line::from(spans.clone());
+        let display_width = line_display_width(&line);
+        if display_width <= target_width {
+            if display_width < target_width {
+                let padding = " ".repeat(target_width - display_width);
+                line.spans.push(Span::raw(padding));
             }
-            if !degrade_run_capsule(&mut model) {
-                return truncate_line_to_width(Line::from(spans), target_width);
-            }
-            attempts += 1;
-            if attempts > 8 {
-                return truncate_line_to_width(Line::from(spans), target_width);
-            }
+            return line;
+        }
+        if !degrade_run_capsule(&mut model) {
+            return truncate_line_to_width(Line::from(spans), target_width);
+        }
+        attempts += 1;
+        if attempts > 8 {
+            return truncate_line_to_width(Line::from(spans), target_width);
         }
     }
 }
@@ -1229,7 +1258,7 @@ mod tests {
             },
             ..StatusLineSnapshot::default()
         };
-        let renderer = StatusLineRenderer;
+        let renderer = DefaultStatusLineRenderer;
         let line = renderer.render(&snapshot, 80, Instant::now());
         let rendered: String = line
             .spans
@@ -1248,7 +1277,7 @@ mod tests {
     fn renderer_snapshot_wide_width() {
         let snapshot = sample_snapshot();
         let now = Instant::now();
-        let renderer = StatusLineRenderer;
+        let renderer = DefaultStatusLineRenderer;
         let line = renderer.render(&snapshot, 80, now);
         assert_snapshot!("statusline_wide_80", snapshot_line_repr(&line));
     }
@@ -1257,7 +1286,7 @@ mod tests {
     fn renderer_snapshot_narrow_width_degrades() {
         let snapshot = sample_snapshot();
         let now = Instant::now();
-        let renderer = StatusLineRenderer;
+        let renderer = DefaultStatusLineRenderer;
         let line = renderer.render(&snapshot, 40, now);
         assert_snapshot!("statusline_narrow_40", snapshot_line_repr(&line));
     }
@@ -1277,7 +1306,7 @@ mod tests {
             }),
             ..StatusLineSnapshot::default()
         };
-        let renderer = StatusLineRenderer;
+        let renderer = DefaultStatusLineRenderer;
         let line = renderer.render(&snapshot, 120, now);
         let has_default = line
             .spans

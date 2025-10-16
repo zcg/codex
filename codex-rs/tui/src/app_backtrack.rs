@@ -6,6 +6,7 @@ use crate::app::App;
 use crate::history_cell::CompositeHistoryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::pager_overlay::Overlay;
+use crate::statusline::CustomStatusLineRenderer;
 use crate::tui;
 use crate::tui::TuiEvent;
 use codex_core::protocol::ConversationPathResponseEvent;
@@ -337,6 +338,7 @@ impl App {
             initial_images: Vec::new(),
             enhanced_keys_supported: self.enhanced_keys_supported,
             auth_manager: self.auth_manager.clone(),
+            status_renderer: Some(Box::new(CustomStatusLineRenderer)),
         };
         self.chat_widget =
             crate::chatwidget::ChatWidget::new_from_existing(init, conv, session_configured);

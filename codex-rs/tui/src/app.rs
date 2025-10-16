@@ -10,6 +10,7 @@ use crate::history_cell::HistoryCell;
 use crate::pager_overlay::Overlay;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::resume_picker::ResumeSelection;
+use crate::statusline::CustomStatusLineRenderer;
 use crate::tui;
 use crate::tui::TuiEvent;
 use codex_ansi_escape::ansi_escape_line;
@@ -105,6 +106,7 @@ impl App {
                     initial_images: initial_images.clone(),
                     enhanced_keys_supported,
                     auth_manager: auth_manager.clone(),
+                    status_renderer: Some(Box::new(CustomStatusLineRenderer)),
                 };
                 ChatWidget::new(init, conversation_manager.clone())
             }
@@ -127,6 +129,7 @@ impl App {
                     initial_images: initial_images.clone(),
                     enhanced_keys_supported,
                     auth_manager: auth_manager.clone(),
+                    status_renderer: Some(Box::new(CustomStatusLineRenderer)),
                 };
                 ChatWidget::new_from_existing(
                     init,
@@ -229,6 +232,7 @@ impl App {
                     initial_images: Vec::new(),
                     enhanced_keys_supported: self.enhanced_keys_supported,
                     auth_manager: self.auth_manager.clone(),
+                    status_renderer: Some(Box::new(CustomStatusLineRenderer)),
                 };
                 self.chat_widget = ChatWidget::new(init, self.server.clone());
                 tui.frame_requester().schedule_frame();
