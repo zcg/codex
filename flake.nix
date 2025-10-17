@@ -51,7 +51,11 @@
           nativeBuildInputs = with pkgs; [ pkg-config ];
           buildInputs = with pkgs;
             [ openssl libgit2 curl zlib ]
-            ++ lib.optionals stdenv.isDarwin [ libiconv Security CoreServices ];
+            ++ lib.optionals stdenv.isDarwin [
+              libiconv
+              darwin.apple_sdk.frameworks.Security
+              darwin.apple_sdk.frameworks.CoreServices
+            ];
           preBuild = ''
             export CARGO_HOME="$TMPDIR/cargo-home"
             mkdir -p "$CARGO_HOME"
