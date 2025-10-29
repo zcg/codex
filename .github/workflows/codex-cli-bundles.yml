@@ -1,4 +1,4 @@
-name: codex-cli-bundles
+name: codex-cli-builds
 
 on:
   push:
@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  bundle:
-    name: Bundle – ${{ matrix.name }}
+  build:
+    name: Build – ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -20,18 +20,12 @@ jobs:
           - name: linux-x86_64
             runner: ubuntu-24.04
             system: x86_64-linux
-            suffix: linux-x86_64
-            bundler: github:nix-community/nix-bundle#default
           - name: darwin-x86_64
             runner: macos-13
             system: x86_64-darwin
-            suffix: darwin-x86_64
-            bundler: github:NixOS/bundlers#default
           - name: darwin-aarch64
             runner: macos-14
             system: aarch64-darwin
-            suffix: darwin-aarch64
-            bundler: github:NixOS/bundlers#default
     steps:
       - uses: actions/checkout@v5
 
@@ -68,60 +62,3 @@ jobs:
         run: |
           nix build --print-build-logs --log-format raw \
             .#packages.${{ matrix.system }}.codex-cli
-
-      - name: Bundle codex-cli
-        id: bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          suffix='${{ matrix.suffix }}'
-          short_sha="${GITHUB_SHA::7}"
-
-          root_dir="dist/codex-cli-${suffix}"
-          mkdir -p "$root_dir"
-
-          nix bundle --print-build-logs --log-format raw \
-            --bundler "${{ matrix.bundler }}" \
-            .#packages.${{ matrix.system }}.codex-cli \
-            -o "$root_dir/codex"
-
-          cp LICENSE "$root_dir/"
-
-          tarball="codex-cli-${suffix}-${short_sha}.tar.gz"
-          tar -C dist -czf "$tarball" "codex-cli-${suffix}"
-
-          shasum -a 256 "$tarball" > "${tarball}.sha256"
-
-          echo "tarball=$tarball" >>"$GITHUB_OUTPUT"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex-cli-${{ matrix.suffix }}
-          path: |
-            ${{ steps.bundle.outputs.tarball }}
-            ${{ steps.bundle.outputs.tarball }}.sha256
-
-  release:
-    name: Release tarballs
-    needs: bundle
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-
-      - name: Publish rolling release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: codex-cli-main
-          name: Codex CLI (main)
-          allowUpdates: true
-          removeArtifacts: true
-          artifactErrorsFailBuild: true
-          commit: ${{ github.sha }}
-          makeLatest: false
-          artifacts: dist/**/*.tar.gz,dist/**/*.sha256
