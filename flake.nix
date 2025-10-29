@@ -53,8 +53,7 @@
             [ openssl libgit2 curl zlib ]
             ++ lib.optionals stdenv.isDarwin [
               libiconv
-              darwin.apple_sdk.frameworks.Security
-              darwin.apple_sdk.frameworks.CoreServices
+              apple-sdk_11
             ];
           preBuild = ''
             export CARGO_HOME="$TMPDIR/cargo-home"

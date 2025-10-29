@@ -21,7 +21,7 @@ jobs:
             runner: ubuntu-24.04
             system: x86_64-linux
             suffix: linux-x86_64
-            bundler: github:NixOS/bundlers#default
+            bundler: github:nix-community/nix-bundle#default
           - name: darwin-x86_64
             runner: macos-13
             system: x86_64-darwin
@@ -57,6 +57,13 @@ jobs:
       - name: Use magic Nix cache
         uses: DeterminateSystems/magic-nix-cache-action@v7
 
+      - name: Use Cachix cache
+        uses: cachix/cachix-action@v15
+        with:
+          name: joshsymonds
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          push: true
+
       - name: Build codex-cli derivation
         run: |
           nix build --print-build-logs --log-format raw \
@@ -76,7 +83,7 @@ jobs:
 
           nix bundle --print-build-logs --log-format raw \
             --bundler "${{ matrix.bundler }}" \
-            .#codex-cli \
+            .#packages.${{ matrix.system }}.codex-cli \
             -o "$root_dir/codex"
 
           cp LICENSE "$root_dir/"
