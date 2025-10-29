@@ -84,6 +84,7 @@ mod state;
 mod tasks;
 mod user_notification;
 pub mod util;
+pub mod workspace_state;
 
 pub use apply_patch::CODEX_APPLY_PATCH_ARG1;
 pub use command_safety::is_safe_command;

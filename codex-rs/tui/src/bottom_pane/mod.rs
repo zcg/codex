@@ -121,6 +121,10 @@ impl BottomPane {
         self.view_stack.last().map(std::convert::AsRef::as_ref)
     }
 
+    pub(crate) fn has_active_view(&self) -> bool {
+        self.active_view().is_some()
+    }
+
     fn push_view(&mut self, view: Box<dyn BottomPaneView>) {
         self.view_stack.push(view);
         self.request_redraw();

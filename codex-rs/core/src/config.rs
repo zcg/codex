@@ -149,6 +149,8 @@ pub struct Config {
     /// TUI notifications preference. When set, the TUI will send OSC 9 notifications on approvals
     /// and turn completions when not focused.
     pub tui_notifications: Notifications,
+    /// Toggle for the bespoke Codex status line rendering.
+    pub tui_custom_statusline: bool,
 
     /// The directory that should be treated as the current working directory
     /// for the session. All relative paths inside the business-logic layer are
@@ -1124,6 +1126,11 @@ impl Config {
                 .as_ref()
                 .map(|t| t.notifications.clone())
                 .unwrap_or_default(),
+            tui_custom_statusline: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.custom_statusline)
+                .unwrap_or_else(|| Tui::default().custom_statusline),
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);
@@ -2820,6 +2827,7 @@ model_verbosity = "high"
                 notices: Default::default(),
                 disable_paste_burst: false,
                 tui_notifications: Default::default(),
+                tui_custom_statusline: true,
                 otel: OtelConfig::default(),
             },
             o3_profile_config
@@ -2891,6 +2899,7 @@ model_verbosity = "high"
             notices: Default::default(),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            tui_custom_statusline: true,
             otel: OtelConfig::default(),
         };
 
@@ -2977,6 +2986,7 @@ model_verbosity = "high"
             notices: Default::default(),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            tui_custom_statusline: true,
             otel: OtelConfig::default(),
         };
 
@@ -3049,6 +3059,7 @@ model_verbosity = "high"
             notices: Default::default(),
             disable_paste_burst: false,
             tui_notifications: Default::default(),
+            tui_custom_statusline: true,
             otel: OtelConfig::default(),
         };
 

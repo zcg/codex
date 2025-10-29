@@ -1,0 +1,5 @@
+---
+source: tui/src/statusline/mod.rs
+expression: snapshot_line_repr(&line)
+---
+00: plain "codex | gpt-5-codex | feature/fix-tests*"

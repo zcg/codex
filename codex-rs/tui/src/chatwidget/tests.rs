@@ -1,6 +1,8 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::chatwidget::clear_devspace_override_for_tests;
+use crate::chatwidget::set_devspace_override_for_tests;
 use crate::test_backend::VT100Backend;
 use crate::tui::FrameRequester;
 use assert_matches::assert_matches;
@@ -245,6 +247,7 @@ async fn helpers_are_available_and_do_not_panic() {
         enhanced_keys_supported: false,
         auth_manager,
         feedback: codex_feedback::CodexFeedback::new(),
+        status_renderer: None,
     };
     let mut w = ChatWidget::new(init, conversation_manager);
     // Basic construction sanity.
@@ -252,7 +255,9 @@ async fn helpers_are_available_and_do_not_panic() {
 }
 
 // --- Helpers for tests that need direct construction and event draining ---
-fn make_chatwidget_manual() -> (
+fn make_chatwidget_with_config(
+    cfg: Config,
+) -> (
     ChatWidget,
     tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
     tokio::sync::mpsc::UnboundedReceiver<Op>,
@@ -260,20 +265,32 @@ fn make_chatwidget_manual() -> (
     let (tx_raw, rx) = unbounded_channel::<AppEvent>();
     let app_event_tx = AppEventSender::new(tx_raw);
     let (op_tx, op_rx) = unbounded_channel::<Op>();
-    let cfg = test_config();
+    let frame_requester = FrameRequester::test_dummy();
+    let frame_requester_clone = frame_requester.clone();
     let bottom = BottomPane::new(BottomPaneParams {
         app_event_tx: app_event_tx.clone(),
-        frame_requester: FrameRequester::test_dummy(),
+        frame_requester,
         has_input_focus: true,
         enhanced_keys_supported: false,
         placeholder_text: "Ask Codex to do anything".to_string(),
         disable_paste_burst: false,
     });
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
-    let widget = ChatWidget {
+    let custom_statusline_enabled = cfg.tui_custom_statusline;
+    let status_line = if custom_statusline_enabled {
+        Some(StatusLineState::with_renderer(
+            &cfg,
+            frame_requester_clone.clone(),
+            Box::new(CustomStatusLineRenderer),
+        ))
+    } else {
+        None
+    };
+    let mut widget = ChatWidget {
         app_event_tx,
         codex_op_tx: op_tx,
         bottom_pane: bottom,
+        status_line,
         active_cell: None,
         config: cfg.clone(),
         auth_manager,
@@ -290,8 +307,9 @@ fn make_chatwidget_manual() -> (
         full_reasoning_buffer: String::new(),
         current_status_header: String::from("Working"),
         retry_status_header: None,
+        custom_statusline_enabled,
         conversation_id: None,
-        frame_requester: FrameRequester::test_dummy(),
+        frame_requester: frame_requester_clone,
         show_welcome_banner: true,
         queued_user_messages: VecDeque::new(),
         suppress_session_configured_redraw: false,
@@ -302,7 +320,30 @@ fn make_chatwidget_manual() -> (
         feedback: codex_feedback::CodexFeedback::new(),
         current_rollout_path: None,
     };
+    if widget.custom_statusline_enabled {
+        widget.bootstrap_status_line();
+    }
     (widget, rx, op_rx)
+}
+
+fn make_chatwidget_manual() -> (
+    ChatWidget,
+    tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+    tokio::sync::mpsc::UnboundedReceiver<Op>,
+) {
+    let mut cfg = test_config();
+    cfg.tui_custom_statusline = false;
+    make_chatwidget_with_config(cfg)
+}
+
+fn make_chatwidget_manual_with_custom_statusline() -> (
+    ChatWidget,
+    tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+    tokio::sync::mpsc::UnboundedReceiver<Op>,
+) {
+    let mut cfg = test_config();
+    cfg.tui_custom_statusline = true;
+    make_chatwidget_with_config(cfg)
 }
 
 pub(crate) fn make_chatwidget_manual_with_sender() -> (
@@ -2536,7 +2577,15 @@ fn deltas_then_same_final_message_are_rendered_snapshot() {
 // then the exec block, another blank line, the status line, a blank line, and the composer.
 #[test]
 fn chatwidget_exec_and_status_layout_vt100_snapshot() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+    set_devspace_override_for_tests(Some("earth".to_string()));
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_custom_statusline();
+    clear_devspace_override_for_tests();
+    if let Some(status_line) = chat.status_line_mut() {
+        status_line.set_devspace(Some("earth".to_string()));
+        status_line.set_hostname(Some("vermissian".to_string()));
+        status_line.set_aws_profile(Some("codex-aws-test".to_string()));
+    }
+    chat.update_statusline_kube_context(Some("codex-dev".to_string()));
     chat.handle_codex_event(Event {
         id: "t1".into(),
         msg: EventMsg::AgentMessage(AgentMessageEvent { message: "I’m going to search the repo for where “Change Approved” is rendered to update that view.".into() }),

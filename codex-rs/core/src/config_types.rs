@@ -343,12 +343,30 @@ impl Default for Notifications {
 }
 
 /// Collection of settings that are specific to the TUI.
-#[derive(Deserialize, Debug, Clone, PartialEq, Default)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Tui {
     /// Enable desktop notifications from the TUI when the terminal is unfocused.
     /// Defaults to `false`.
     #[serde(default)]
     pub notifications: Notifications,
+    /// Enable the custom Codex status line presentation.
+    #[serde(default = "Tui::default_custom_statusline")]
+    pub custom_statusline: bool,
+}
+
+impl Default for Tui {
+    fn default() -> Self {
+        Self {
+            notifications: Notifications::default(),
+            custom_statusline: Tui::default_custom_statusline(),
+        }
+    }
+}
+
+impl Tui {
+    const fn default_custom_statusline() -> bool {
+        true
+    }
 }
 
 /// Settings for notices we display to users via the tui and app-server clients

@@ -1,0 +1,65 @@
+name: codex-cli-builds
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: codex-cli-builds-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build – ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            system: x86_64-linux
+          - name: darwin-x86_64
+            runner: macos-13
+            system: x86_64-darwin
+          - name: darwin-aarch64
+            runner: macos-14
+            system: aarch64-darwin
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v13
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Cache Nix directories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/nix
+            ~/.local/share/nix
+            ~/.local/state/nix
+            ~/Library/Caches/nix
+          key: ${{ runner.os }}-nix-${{ matrix.system }}-${{ hashFiles('flake.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-nix-${{ matrix.system }}-
+            ${{ runner.os }}-nix-
+
+      - name: Use magic Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@v7
+
+      - name: Use Cachix cache
+        uses: cachix/cachix-action@v15
+        with:
+          name: joshsymonds
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          push: true
+
+      - name: Build codex-cli derivation
+        run: |
+          cachix watch-exec joshsymonds -- \
+            nix build --print-build-logs --log-format raw --no-link --print-out-paths \
+              .#packages.${{ matrix.system }}.codex-cli

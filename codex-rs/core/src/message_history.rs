@@ -27,6 +27,8 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
+use fs2::FileExt;
+
 use crate::config::Config;
 use crate::config_types::HistoryPersistence;
 
@@ -112,19 +114,21 @@ pub(crate) async fn append_entry(
 
     // Perform a blocking write under an advisory write lock using std::fs.
     tokio::task::spawn_blocking(move || -> Result<()> {
-        // Retry a few times to avoid indefinite blocking when contended.
         for _ in 0..MAX_RETRIES {
-            match history_file.try_lock() {
+            match FileExt::try_lock_exclusive(&history_file) {
                 Ok(()) => {
-                    // While holding the exclusive lock, write the full line.
-                    history_file.write_all(line.as_bytes())?;
-                    history_file.flush()?;
+                    let write_result = history_file
+                        .write_all(line.as_bytes())
+                        .and_then(|_| history_file.flush());
+                    let unlock_result = FileExt::unlock(&history_file);
+                    write_result?;
+                    unlock_result?;
                     return Ok(());
                 }
-                Err(std::fs::TryLockError::WouldBlock) => {
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(RETRY_SLEEP);
                 }
-                Err(e) => return Err(e.into()),
+                Err(err) => return Err(err),
             }
         }
 
@@ -216,15 +220,15 @@ pub(crate) fn lookup(log_id: u64, offset: usize, config: &Config) -> Option<Hist
     // Open & lock file for reading using a shared lock.
     // Retry a few times to avoid indefinite blocking.
     for _ in 0..MAX_RETRIES {
-        let lock_result = file.try_lock_shared();
-
-        match lock_result {
+        match FileExt::try_lock_shared(&file) {
             Ok(()) => {
+                let mut found = None;
                 let reader = BufReader::new(&file);
                 for (idx, line_res) in reader.lines().enumerate() {
                     let line = match line_res {
                         Ok(l) => l,
                         Err(e) => {
+                            let _ = FileExt::unlock(&file);
                             tracing::warn!(error = %e, "failed to read line from history file");
                             return None;
                         }
@@ -232,18 +236,22 @@ pub(crate) fn lookup(log_id: u64, offset: usize, config: &Config) -> Option<Hist
 
                     if idx == offset {
                         match serde_json::from_str::<HistoryEntry>(&line) {
-                            Ok(entry) => return Some(entry),
+                            Ok(entry) => {
+                                found = Some(entry);
+                                break;
+                            }
                             Err(e) => {
+                                let _ = FileExt::unlock(&file);
                                 tracing::warn!(error = %e, "failed to parse history entry");
                                 return None;
                             }
                         }
                     }
                 }
-                // Not found at requested offset.
-                return None;
+                let _ = FileExt::unlock(&file);
+                return found;
             }
-            Err(std::fs::TryLockError::WouldBlock) => {
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(RETRY_SLEEP);
             }
             Err(e) => {

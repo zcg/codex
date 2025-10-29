@@ -8,6 +8,7 @@ use codex_file_search::FileMatch;
 
 use crate::bottom_pane::ApprovalRequest;
 use crate::history_cell::HistoryCell;
+use crate::statusline::StatusLineGitSnapshot;
 
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
@@ -40,6 +41,11 @@ pub(crate) enum AppEvent {
         query: String,
         matches: Vec<FileMatch>,
     },
+
+    /// Background Git detection updates for the custom status line.
+    StatusLineGit(Option<StatusLineGitSnapshot>),
+    /// Background kube context updates for the custom status line.
+    StatusLineKubeContext(Option<String>),
 
     /// Result of computing a `/diff` command.
     DiffResult(String),

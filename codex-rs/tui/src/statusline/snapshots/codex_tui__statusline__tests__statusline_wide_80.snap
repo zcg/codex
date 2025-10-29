@@ -1,0 +1,32 @@
+---
+source: tui/src/statusline/mod.rs
+assertion_line: 1292
+expression: snapshot_line_repr(&line)
+---
+00: fg=Rgb(203, 166, 247) "\u{e0b6}"
+01: fg=Rgb(30, 30, 46)|bg=Rgb(203, 166, 247) " "
+02: fg=Rgb(30, 30, 46)|bg=Rgb(203, 166, 247)|mod=DIM "◦"
+03: fg=Rgb(30, 30, 46)|bg=Rgb(203, 166, 247) " "
+04: fg=Rgb(203, 166, 247)|bg=Rgb(180, 190, 254) "\u{e0b0}"
+05: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) " "
+06: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) "codex"
+07: fg=Rgb(30, 30, 46)|bg=Rgb(180, 190, 254) " "
+08: fg=Rgb(180, 190, 254)|bg=Rgb(137, 220, 235) "\u{e0b0}"
+09: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+10: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) "\u{f16a5}"
+11: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+12: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235)|mod=BOLD "gpt-5-codex"
+13: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+14: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235)|mod=ITALIC "high"
+15: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+16: fg=Rgb(137, 220, 235) "\u{e0b0}"
+17: plain "    "
+18: fg=Rgb(245, 224, 220) "\u{e0b2}"
+19: fg=Rgb(30, 30, 46)|bg=Rgb(245, 224, 220) " "
+20: fg=Rgb(30, 30, 46)|bg=Rgb(245, 224, 220) "\u{f233} vermissian"
+21: fg=Rgb(30, 30, 46)|bg=Rgb(245, 224, 220) " "
+22: fg=Rgb(137, 220, 235)|bg=Rgb(245, 224, 220) "\u{e0b2}"
+23: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+24: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) "\u{e0a0} feature/fix-tests* ↑1"
+25: fg=Rgb(30, 30, 46)|bg=Rgb(137, 220, 235) " "
+26: fg=Rgb(137, 220, 235) "\u{e0b4}"
