@@ -2480,7 +2480,17 @@ impl ChatWidget {
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         let [_, _, bottom_pane_area] = self.layout_areas(area);
-        self.bottom_pane.cursor_pos(bottom_pane_area)
+        let pane_area = self
+            .status_overlay
+            .as_ref()
+            .and_then(|overlay| {
+                overlay
+                    .layout(bottom_pane_area, self.bottom_pane.has_active_view())
+                    .map(|layout| layout.pane_area)
+            })
+            .filter(|pane| pane.height > 0)
+            .unwrap_or(bottom_pane_area);
+        self.bottom_pane.cursor_pos(pane_area)
     }
 }
 

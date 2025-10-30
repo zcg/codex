@@ -304,6 +304,12 @@ impl BottomPane {
         self.composer.current_text()
     }
 
+    #[cfg(test)]
+    pub(crate) fn composer_layout_for_tests(&self, area: Rect) -> [Rect; 3] {
+        let [_, content_area] = self.layout(area);
+        self.composer.layout_areas_for_tests(content_area)
+    }
+
     /// Update the animated header shown to the left of the brackets in the
     /// status indicator (defaults to "Working"). No-ops if the status
     /// indicator is not active.

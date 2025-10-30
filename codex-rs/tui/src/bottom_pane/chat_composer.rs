@@ -192,7 +192,7 @@ impl ChatComposer {
             ActivePopup::None => Constraint::Max(footer_total_height),
         };
         let mut area = area;
-        if area.height > 1 {
+        if area.height > BOTTOM_MARGIN_HEIGHT + 1 {
             area.height -= 1;
             area.y += 1;
         }
@@ -204,6 +204,11 @@ impl ChatComposer {
         );
         textarea_rect.x = textarea_rect.x.saturating_add(LIVE_PREFIX_COLS);
         [composer_rect, textarea_rect, popup_rect]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout_areas_for_tests(&self, area: Rect) -> [Rect; 3] {
+        self.layout_areas(area)
     }
 
     fn footer_spacing(_footer_hint_height: u16) -> u16 {

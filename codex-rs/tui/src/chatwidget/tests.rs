@@ -2572,6 +2572,122 @@ fn deltas_then_same_final_message_are_rendered_snapshot() {
     assert_snapshot!(combined);
 }
 
+#[test]
+fn cursor_row_aligns_with_prompt_when_status_overlay_active() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_custom_statusline();
+    chat.bottom_pane.insert_str("hello");
+
+    let width = 80;
+    let height = chat.desired_height(width);
+    let area = ratatui::layout::Rect::new(0, 0, width, height);
+    let mut buf = ratatui::buffer::Buffer::empty(area);
+    (&chat).render_ref(area, &mut buf);
+
+    let cursor = chat
+        .cursor_pos(area)
+        .expect("cursor position should be available when overlay is active");
+    let mut prompt_row = None;
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in 0..area.width {
+            row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+        }
+        if row.contains('›') {
+            prompt_row = Some((y, row));
+            break;
+        }
+    }
+    let (prompt_row_idx, prompt_row_contents) =
+        prompt_row.expect("expected to find composer prompt row");
+    assert_eq!(
+        cursor.1, prompt_row_idx,
+        "cursor should align with composer prompt when status overlay is active: {prompt_row_contents:?}"
+    );
+}
+
+#[test]
+fn typed_input_preserves_padding_and_margin_with_status_overlay() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual_with_custom_statusline();
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+    chat.bottom_pane.insert_str("h");
+
+    let width = 80;
+    assert!(
+        chat.bottom_pane.desired_height(width) >= 3,
+        "expected bottom pane to reserve at least three rows"
+    );
+    let height = chat.desired_height(width);
+    let area = ratatui::layout::Rect::new(0, 0, width, height);
+    let mut buf = ratatui::buffer::Buffer::empty(area);
+    (&chat).render_ref(area, &mut buf);
+
+    let [_, _, bottom_pane_area] = chat.layout_areas(area);
+    let has_active_view = chat.bottom_pane.has_active_view();
+    let pane_area = if let Some(overlay) = chat.status_overlay.as_ref() {
+        let layout = overlay
+            .layout(bottom_pane_area, has_active_view)
+            .unwrap_or_else(|| {
+                panic!("expected overlay layout to be available for custom status line")
+            });
+        layout.pane_area
+    } else {
+        bottom_pane_area
+    };
+    let [composer_rect, textarea_rect, popup_rect] =
+        chat.bottom_pane.composer_layout_for_tests(pane_area);
+
+    let mut composer_row = String::new();
+    for x in textarea_rect.x..textarea_rect.x.saturating_add(textarea_rect.width) {
+        composer_row.push(
+            buf[(x, textarea_rect.y)]
+                .symbol()
+                .chars()
+                .next()
+                .unwrap_or(' '),
+        );
+    }
+    assert!(
+        composer_row.trim_end().starts_with('h'),
+        "expected composer row to render typed text but saw {composer_row:?}"
+    );
+    assert_eq!(
+        buf[(composer_rect.x, composer_rect.y)].symbol(),
+        "›",
+        "expected prompt glyph to remain on composer row"
+    );
+
+    assert!(
+        popup_rect.height > 0,
+        "expected popup rect to include bottom margin row after typing"
+    );
+
+    let bottom_padding_y = composer_rect
+        .y
+        .saturating_add(composer_rect.height)
+        .saturating_sub(1);
+    let margin_y = popup_rect.y;
+    let input_row_y = composer_rect.y;
+    let input_bg = buf[(composer_rect.x, input_row_y)].style().bg;
+
+    for x in composer_rect.x..composer_rect.x.saturating_add(composer_rect.width) {
+        let bottom_cell = &buf[(x, bottom_padding_y)];
+        assert_eq!(
+            bottom_cell.style().bg,
+            input_bg,
+            "expected bottom padding to retain composer background after typing at cell ({x},{bottom_padding_y})"
+        );
+    }
+
+    let mut margin_row = String::new();
+    for x in popup_rect.x..popup_rect.x.saturating_add(popup_rect.width) {
+        margin_row.push(buf[(x, margin_y)].symbol().chars().next().unwrap_or(' '));
+    }
+    assert!(
+        margin_row.trim().is_empty(),
+        "expected margin row at {margin_y} to remain whitespace after typing: {margin_row:?}"
+    );
+}
+
 // Combined visual snapshot using vt100 for history + direct buffer overlay for UI.
 // This renders the final visual as seen in a terminal: history above, then a blank line,
 // then the exec block, another blank line, the status line, a blank line, and the composer.
