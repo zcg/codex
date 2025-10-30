@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 2615
 expression: term.backend().vt100().screen().contents()
 ---
 • I’m going to search the repo for where “Change Approved” is rendered to update
@@ -13,4 +12,5 @@ expression: term.backend().vt100().screen().contents()
 
 
 › Summarize recent commits
+
  tui  󱚥 gpt-5-codex           vermissian   codex-aws-test  ☸ codex-dev 

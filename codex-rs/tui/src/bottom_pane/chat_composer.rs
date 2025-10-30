@@ -118,7 +118,7 @@ enum ActivePopup {
     File(FileSearchPopup),
 }
 
-const FOOTER_SPACING_HEIGHT: u16 = 0;
+const FOOTER_SPACING_HEIGHT: u16 = 1;
 
 impl ChatComposer {
     pub fn new(
@@ -205,12 +205,8 @@ impl ChatComposer {
         [composer_rect, textarea_rect, popup_rect]
     }
 
-    fn footer_spacing(footer_hint_height: u16) -> u16 {
-        if footer_hint_height == 0 {
-            0
-        } else {
-            FOOTER_SPACING_HEIGHT
-        }
+    fn footer_spacing(_footer_hint_height: u16) -> u16 {
+        FOOTER_SPACING_HEIGHT
     }
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
@@ -1593,7 +1589,7 @@ impl WidgetRef for ChatComposer {
         let style = user_message_style();
         let mut block_rect = composer_rect;
         block_rect.y = composer_rect.y.saturating_sub(1);
-        block_rect.height = composer_rect.height.saturating_add(1);
+        block_rect.height = block_rect.height.saturating_add(2);
         Block::default().style(style).render_ref(block_rect, buf);
         buf.set_span(
             composer_rect.x,
@@ -1677,6 +1673,92 @@ mod tests {
     use crate::bottom_pane::prompt_args::extract_positional_args_for_prompt_line;
     use crate::bottom_pane::textarea::TextArea;
     use tokio::sync::mpsc::unbounded_channel;
+
+    #[test]
+    fn composer_cursor_aligns_with_text_row() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.insert_str("hello");
+
+        let area = Rect::new(0, 0, 40, 6);
+        let cursor = composer
+            .cursor_pos(area)
+            .expect("cursor position should be available");
+
+        let mut buf = Buffer::empty(area);
+        composer.render_ref(area, &mut buf);
+
+        let mut prompt_row = None;
+        for y in 0..area.height {
+            let mut row = String::new();
+            for x in 0..area.width {
+                row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            if row.contains('›') {
+                prompt_row = Some((y, row));
+                break;
+            }
+        }
+
+        let (prompt_row_idx, prompt_row_contents) =
+            prompt_row.expect("expected prompt marker row to be rendered");
+        assert_eq!(
+            cursor.1, prompt_row_idx,
+            "cursor should align with composer row containing text; row contents: {prompt_row_contents:?}"
+        );
+    }
+
+    #[test]
+    fn composer_renders_bottom_padding_row() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.insert_str("hello");
+
+        let area = Rect::new(0, 0, 40, 6);
+        let mut buf = Buffer::empty(area);
+        composer.render_ref(area, &mut buf);
+
+        let [composer_rect, _, _] = composer.layout_areas(area);
+        let top_padding_y = composer_rect.y.saturating_sub(1);
+        let bottom_padding_y = composer_rect.y.saturating_add(composer_rect.height);
+        let input_row_y = composer_rect.y;
+
+        assert!(
+            bottom_padding_y < area.y.saturating_add(area.height),
+            "expected area to include a row for bottom padding"
+        );
+
+        for x in composer_rect.x..composer_rect.x.saturating_add(composer_rect.width) {
+            let input_bg = buf[(x, input_row_y)].style().bg;
+            let top_cell = &buf[(x, top_padding_y)];
+            assert_eq!(
+                top_cell.style().bg,
+                input_bg,
+                "expected top padding cell at ({x},{top_padding_y}) to share the input background"
+            );
+
+            let bottom_cell = &buf[(x, bottom_padding_y)];
+            assert_eq!(
+                bottom_cell.style().bg,
+                input_bg,
+                "expected bottom padding cell at ({x},{bottom_padding_y}) to share the input background"
+            );
+        }
+    }
 
     #[test]
     fn footer_hint_row_is_separated_from_composer() {

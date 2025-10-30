@@ -767,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn status_and_composer_fill_height_without_bottom_padding() {
+    fn status_and_composer_include_bottom_padding() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
@@ -790,7 +790,7 @@ mod tests {
         );
         let area = Rect::new(0, 0, 30, height);
         assert_snapshot!(
-            "status_and_composer_fill_height_without_bottom_padding",
+            "status_and_composer_include_bottom_padding",
             render_snapshot(&pane, area)
         );
     }

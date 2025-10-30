@@ -1,8 +1,11 @@
 use super::*;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
-use crate::chatwidget::clear_devspace_override_for_tests;
-use crate::chatwidget::set_devspace_override_for_tests;
+use crate::statusline::CustomStatusLineRenderer;
+use crate::statusline::StatusLineOverlay;
+use crate::statusline::StatusLineRenderer;
+use crate::statusline::clear_devspace_override_for_tests;
+use crate::statusline::set_devspace_override_for_tests;
 use crate::test_backend::VT100Backend;
 use crate::tui::FrameRequester;
 use assert_matches::assert_matches;
@@ -276,21 +279,18 @@ fn make_chatwidget_with_config(
         disable_paste_burst: false,
     });
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
-    let custom_statusline_enabled = cfg.tui_custom_statusline;
-    let status_line = if custom_statusline_enabled {
-        Some(StatusLineState::with_renderer(
-            &cfg,
-            frame_requester_clone.clone(),
-            Box::new(CustomStatusLineRenderer),
-        ))
-    } else {
-        None
-    };
+    let status_overlay = StatusLineOverlay::new(
+        &cfg,
+        frame_requester_clone.clone(),
+        app_event_tx.clone(),
+        cfg.tui_custom_statusline
+            .then(|| Box::new(CustomStatusLineRenderer) as Box<dyn StatusLineRenderer>),
+    );
     let mut widget = ChatWidget {
         app_event_tx,
         codex_op_tx: op_tx,
         bottom_pane: bottom,
-        status_line,
+        status_overlay,
         active_cell: None,
         config: cfg.clone(),
         auth_manager,
@@ -307,7 +307,6 @@ fn make_chatwidget_with_config(
         full_reasoning_buffer: String::new(),
         current_status_header: String::from("Working"),
         retry_status_header: None,
-        custom_statusline_enabled,
         conversation_id: None,
         frame_requester: frame_requester_clone,
         show_welcome_banner: true,
@@ -320,9 +319,10 @@ fn make_chatwidget_with_config(
         feedback: codex_feedback::CodexFeedback::new(),
         current_rollout_path: None,
     };
-    if widget.custom_statusline_enabled {
-        widget.bootstrap_status_line();
+    if let Some(overlay) = widget.status_overlay.as_mut() {
+        overlay.bootstrap(&widget.config, widget.token_info.clone(), Vec::new());
     }
+    widget.refresh_queued_user_messages();
     (widget, rx, op_rx)
 }
 

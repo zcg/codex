@@ -11,6 +11,7 @@ This repository keeps the upstream OpenAI TUI as the "engine" and applies the be
 - **Renderer seam only.** Leave upstream widgets intact. The custom look lives in `codex-rs/tui/src/statusline/skins`, implementing `StatusLineRenderer`. Upstream logic keeps producing `StatusLineSnapshot`; the renderer turns that snapshot into our palette and capsule.
 - **Config flag.** The renderer activates when `Config.tui_custom_statusline` is `true` (default). If the flag is disabled the upstream bar renders unchanged. Avoid direct feature gates inside upstream modules—keep the hook isolated to `ChatWidget`.
 - **Custom assets in one module.** Colors, icons, and layout helpers stay in the statusline skin module. Nothing outside the module should rely on our palette to minimize conflict surface during merges.
+- **Controller shim.** `tui/src/statusline/overlay.rs` owns background refresh, queued message mirroring, and rendering glue. `ChatWidget` forwards high-level events to this shim so upstream merges only touch the thin hook layer.
 
 ### 2. Automate Reapplication
 
@@ -33,4 +34,3 @@ This repository keeps the upstream OpenAI TUI as the "engine" and applies the be
 5. Update snapshots only when behaviour intentionally changes.
 
 With this structure, upstream refreshes become “pull → reapply → fix hooks” instead of wrestling with widespread conflicts.
-

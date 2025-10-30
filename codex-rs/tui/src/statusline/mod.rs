@@ -16,12 +16,18 @@ use ratatui::text::Span;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+mod overlay;
 mod palette;
 pub(crate) mod skins;
 pub(crate) mod state;
 
+pub(crate) use overlay::StatusLineOverlay;
 pub(crate) use skins::CustomStatusLineRenderer;
-pub(crate) use state::StatusLineState;
+
+#[cfg(test)]
+pub(crate) use overlay::clear_devspace_override_for_tests;
+#[cfg(test)]
+pub(crate) use overlay::set_devspace_override_for_tests;
 
 use palette::BASE;
 use palette::GREEN;
@@ -1317,7 +1323,7 @@ mod tests {
         assert!(repr.contains("next:"), "queue prefix missing: {repr}");
         assert!(repr.contains("git status"), "queue preview missing: {repr}");
         assert!(repr.contains("(+1)"), "queue extra count missing: {repr}");
-        assert!(repr.contains("alt + ↑"), "hint missing: {repr}");
+        assert!(repr.contains("⌥ + ↑"), "hint missing: {repr}");
     }
 
     #[test]

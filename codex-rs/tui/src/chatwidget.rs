@@ -1,15 +1,10 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::env;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::Mutex;
 
 use codex_core::config::Config;
 use codex_core::config_types::Notifications;
-use codex_core::git_info::collect_git_info;
 use codex_core::git_info::current_branch_name;
 use codex_core::git_info::local_git_branches;
 use codex_core::project_doc::DEFAULT_PROJECT_DOC_FILENAME;
@@ -56,7 +51,6 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
-use hostname::get as get_hostname;
 use rand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -70,10 +64,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
-use tokio::process::Command;
-use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::task::spawn_blocking;
 use tracing::debug;
 
 use crate::app_event::AppEvent;
@@ -105,10 +96,9 @@ use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
-use crate::statusline::CustomStatusLineRenderer;
 use crate::statusline::StatusLineGitSnapshot;
+use crate::statusline::StatusLineOverlay;
 use crate::statusline::StatusLineRenderer;
-use crate::statusline::StatusLineState;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 mod interrupts;
@@ -120,9 +110,6 @@ mod session_header;
 use self::session_header::SessionHeader;
 use crate::streaming::controller::StreamController;
 use std::path::Path;
-
-#[cfg(test)]
-use lazy_static::lazy_static;
 
 use chrono::Local;
 use codex_common::approval_presets::ApprovalPreset;
@@ -251,7 +238,7 @@ pub(crate) struct ChatWidget {
     app_event_tx: AppEventSender,
     codex_op_tx: UnboundedSender<Op>,
     bottom_pane: BottomPane,
-    status_line: Option<StatusLineState>,
+    status_overlay: Option<StatusLineOverlay>,
     active_cell: Option<Box<dyn HistoryCell>>,
     config: Config,
     auth_manager: Arc<AuthManager>,
@@ -274,7 +261,6 @@ pub(crate) struct ChatWidget {
     current_status_header: String,
     // Previous status header to restore after a transient stream retry.
     retry_status_header: Option<String>,
-    custom_statusline_enabled: bool,
     conversation_id: Option<ConversationId>,
     frame_requester: FrameRequester,
     // Whether to include the initial welcome banner on session configured
@@ -329,120 +315,39 @@ impl ChatWidget {
         }
     }
 
-    fn bootstrap_status_line(&mut self) {
-        if self.status_line.is_none() {
-            return;
-        }
-        self.sync_status_line_model();
-        let initial_tokens = self.token_info.clone();
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_tokens(initial_tokens);
-            status_line.set_devspace(detect_devspace());
-            status_line.set_hostname(detect_hostname());
-            status_line.set_aws_profile(detect_aws_profile());
-        }
-        self.refresh_queued_user_messages();
-        self.spawn_status_line_background_tasks();
-    }
-
-    fn sync_status_line_model(&mut self) {
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_model(
-                self.config.model.clone(),
-                self.config.model_reasoning_effort,
-            );
-        }
-    }
-
-    fn spawn_status_line_background_tasks(&self) {
-        if self.status_line.is_none() {
-            return;
-        }
-        self.spawn_git_refresh();
-        self.spawn_kube_refresh();
-    }
-
-    fn spawn_git_refresh(&self) {
-        if self.status_line.is_none() {
-            return;
-        }
-        let Ok(handle) = Handle::try_current() else {
-            return;
-        };
-        let cwd = self.config.cwd.clone();
-        let tx = self.app_event_tx.clone();
-        handle.spawn(async move {
-            let snapshot = collect_status_line_git_snapshot(cwd).await;
-            tx.send(AppEvent::StatusLineGit(snapshot));
-        });
-    }
-
-    fn spawn_kube_refresh(&self) {
-        if self.status_line.is_none() {
-            return;
-        }
-        let Ok(handle) = Handle::try_current() else {
-            return;
-        };
-        let tx = self.app_event_tx.clone();
-        handle.spawn(async move {
-            let context = detect_kube_context_async().await;
-            tx.send(AppEvent::StatusLineKubeContext(context));
-        });
-    }
-
     pub(crate) fn update_statusline_git(&mut self, git: Option<StatusLineGitSnapshot>) {
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.set_git_info(git);
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.update_git(git);
         }
     }
 
     pub(crate) fn update_statusline_kube_context(&mut self, context: Option<String>) {
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.set_kubernetes_context(context);
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.update_kube_context(context);
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn set_status_renderer(&mut self, renderer: Box<dyn StatusLineRenderer>) {
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.set_renderer(renderer);
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_renderer(renderer);
         }
     }
 
-    pub(crate) fn status_line_mut(&mut self) -> Option<&mut StatusLineState> {
-        self.status_line.as_mut()
-    }
-
-    pub(crate) fn status_line(&self) -> Option<&StatusLineState> {
-        self.status_line.as_ref()
-    }
-
-    fn render_custom_run_pill(&self, area: Rect, buf: &mut Buffer) {
-        if area.is_empty() {
-            return;
-        }
-        if let Some(status_line) = self.status_line.as_ref() {
-            let line = status_line.render_run_pill(area.width);
-            Paragraph::new(line).render_ref(area, buf);
-        }
-    }
-
-    fn render_custom_status_line(&self, area: Rect, buf: &mut Buffer) {
-        if area.is_empty() {
-            return;
-        }
-        if let Some(status_line) = self.status_line.as_ref() {
-            let line = status_line.render_line(area.width);
-            Paragraph::new(line).render_ref(area, buf);
-        }
+    #[cfg(test)]
+    pub(crate) fn status_line_mut(
+        &mut self,
+    ) -> Option<&mut crate::statusline::state::StatusLineState> {
+        self.status_overlay
+            .as_mut()
+            .map(StatusLineOverlay::state_mut)
     }
 
     fn set_status_header(&mut self, header: String) {
         self.current_status_header = header.clone();
         self.bottom_pane.update_status_header(header);
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_run_header(&self.current_status_header);
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_run_header(&self.current_status_header);
         }
     }
 
@@ -452,11 +357,11 @@ impl ChatWidget {
             .set_history_metadata(event.history_log_id, event.history_entry_count);
         self.conversation_id = Some(event.session_id);
         self.current_rollout_path = Some(event.rollout_path.clone());
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.set_session_id(Some(event.session_id.to_string()));
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_session_id(Some(event.session_id.to_string()));
+            overlay.sync_model(&self.config);
+            overlay.spawn_background_tasks();
         }
-        self.sync_status_line_model();
-        self.spawn_status_line_background_tasks();
         let initial_messages = event.initial_messages.clone();
         let model_for_header = event.model.clone();
         self.session_header.set_model(&model_for_header);
@@ -570,15 +475,15 @@ impl ChatWidget {
         self.bottom_pane.set_task_running(true);
         self.retry_status_header = None;
         self.bottom_pane.set_interrupt_hint_visible(true);
-        if self.custom_statusline_enabled {
+        if self.status_overlay.is_some() {
             self.bottom_pane.hide_status_indicator();
         }
         self.set_status_header(String::from("Working"));
         self.full_reasoning_buffer.clear();
         self.reasoning_buffer.clear();
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.set_interrupt_hint_visible(true);
-            status_line.start_task("Working");
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_interrupt_hint_visible(true);
+            overlay.start_task("Working");
         }
         self.request_redraw();
     }
@@ -589,11 +494,13 @@ impl ChatWidget {
         // Mark task stopped and request redraw now that all content is in history.
         self.bottom_pane.set_task_running(false);
         self.running_commands.clear();
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.set_interrupt_hint_visible(false);
-            status_line.complete_task();
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_interrupt_hint_visible(false);
+            overlay.complete_task();
         }
-        self.spawn_git_refresh();
+        if let Some(overlay) = self.status_overlay.as_ref() {
+            overlay.spawn_background_tasks();
+        }
         self.request_redraw();
 
         // If there is a queued user message, send exactly one now to begin the next turn.
@@ -619,8 +526,8 @@ impl ChatWidget {
         } else {
             self.bottom_pane.set_context_window_percent(None);
         }
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_tokens(info);
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.update_tokens(info);
         }
     }
 
@@ -748,9 +655,9 @@ impl ChatWidget {
     }
 
     fn on_patch_apply_begin(&mut self, event: PatchApplyBeginEvent) {
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.resume_timer();
-            status_line.update_run_header("Applying patch");
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.resume_timer();
+            overlay.set_run_header("Applying patch");
         }
         self.add_to_history(history_cell::new_patch_event(
             event.changes,
@@ -836,14 +743,14 @@ impl ChatWidget {
     fn on_undo_started(&mut self, event: UndoStartedEvent) {
         self.bottom_pane.ensure_status_indicator();
         self.bottom_pane.set_interrupt_hint_visible(false);
-        if self.custom_statusline_enabled {
+        if self.status_overlay.is_some() {
             self.bottom_pane.hide_status_indicator();
         }
         let message = event
             .message
             .unwrap_or_else(|| "Undo in progress...".to_string());
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.set_interrupt_hint_visible(false);
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_interrupt_hint_visible(false);
         }
         self.set_status_header(message);
     }
@@ -985,10 +892,12 @@ impl ChatWidget {
             }
         }
         if self.running_commands.is_empty() {
-            if let Some(status_line) = self.status_line.as_mut() {
-                status_line.update_run_header("Working");
+            if let Some(overlay) = self.status_overlay.as_mut() {
+                overlay.set_run_header("Working");
             }
-            self.spawn_git_refresh();
+            if let Some(overlay) = self.status_overlay.as_ref() {
+                overlay.refresh_git();
+            }
         }
     }
 
@@ -1001,10 +910,12 @@ impl ChatWidget {
         if !event.success {
             self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
         }
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_run_header("Working");
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_run_header("Working");
         }
-        self.spawn_git_refresh();
+        if let Some(overlay) = self.status_overlay.as_ref() {
+            overlay.refresh_git();
+        }
     }
 
     pub(crate) fn handle_exec_approval_now(&mut self, id: String, ev: ExecApprovalRequestEvent) {
@@ -1019,8 +930,8 @@ impl ChatWidget {
             reason: ev.reason,
             risk: ev.risk,
         };
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_run_header(&Self::approval_status_label("command"));
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_run_header(&StatusLineOverlay::approval_status_label("command"));
         }
         self.bottom_pane.push_approval_request(request);
         self.request_redraw();
@@ -1039,8 +950,8 @@ impl ChatWidget {
             changes: ev.changes.clone(),
             cwd: self.config.cwd.clone(),
         };
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_run_header(&Self::approval_status_label("patch"));
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_run_header(&StatusLineOverlay::approval_status_label("patch"));
         }
         self.bottom_pane.push_approval_request(request);
         self.request_redraw();
@@ -1060,9 +971,9 @@ impl ChatWidget {
                 is_user_shell_command: ev.is_user_shell_command,
             },
         );
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.resume_timer();
-            status_line.update_run_header(&Self::exec_status_label(&ev.command));
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.resume_timer();
+            overlay.set_run_header(&StatusLineOverlay::exec_status_label(&ev.command));
         }
         if let Some(cell) = self
             .active_cell
@@ -1092,9 +1003,9 @@ impl ChatWidget {
 
     pub(crate) fn handle_mcp_begin_now(&mut self, ev: McpToolCallBeginEvent) {
         self.flush_answer_stream_with_separator();
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.resume_timer();
-            status_line.update_run_header(&Self::tool_status_label(&ev.invocation));
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.resume_timer();
+            overlay.set_run_header(&StatusLineOverlay::tool_status_label(&ev.invocation));
         }
         self.flush_active_cell();
         self.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
@@ -1132,8 +1043,8 @@ impl ChatWidget {
         if let Some(extra) = extra_cell {
             self.add_boxed_history(extra);
         }
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_run_header("Working");
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_run_header("Working");
         }
     }
 
@@ -1176,18 +1087,13 @@ impl ChatWidget {
         let mut rng = rand::rng();
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
         let codex_op_tx = spawn_agent(config.clone(), app_event_tx.clone(), conversation_manager);
-        let custom_statusline_enabled = config.tui_custom_statusline;
         let frame_requester_clone = frame_requester.clone();
-        let status_line = if custom_statusline_enabled {
-            let renderer = status_renderer.unwrap_or_else(|| Box::new(CustomStatusLineRenderer));
-            Some(StatusLineState::with_renderer(
-                &config,
-                frame_requester_clone.clone(),
-                renderer,
-            ))
-        } else {
-            None
-        };
+        let status_overlay = StatusLineOverlay::new(
+            &config,
+            frame_requester_clone.clone(),
+            app_event_tx.clone(),
+            status_renderer,
+        );
 
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -1201,7 +1107,7 @@ impl ChatWidget {
                 placeholder_text: placeholder,
                 disable_paste_burst: config.disable_paste_burst,
             }),
-            status_line,
+            status_overlay,
             active_cell: None,
             config: config.clone(),
             auth_manager,
@@ -1221,7 +1127,6 @@ impl ChatWidget {
             full_reasoning_buffer: String::new(),
             current_status_header: String::from("Working"),
             retry_status_header: None,
-            custom_statusline_enabled,
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: true,
@@ -1233,9 +1138,15 @@ impl ChatWidget {
             feedback,
             current_rollout_path: None,
         };
-        if widget.custom_statusline_enabled {
-            widget.bootstrap_status_line();
+        if let Some(overlay) = widget.status_overlay.as_mut() {
+            let queued: Vec<String> = widget
+                .queued_user_messages
+                .iter()
+                .map(|m| m.text.clone())
+                .collect();
+            overlay.bootstrap(&widget.config, widget.token_info.clone(), queued);
         }
+        widget.refresh_queued_user_messages();
         widget
     }
 
@@ -1261,18 +1172,13 @@ impl ChatWidget {
 
         let codex_op_tx =
             spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
-        let custom_statusline_enabled = config.tui_custom_statusline;
         let frame_requester_clone = frame_requester.clone();
-        let status_line = if custom_statusline_enabled {
-            let renderer = status_renderer.unwrap_or_else(|| Box::new(CustomStatusLineRenderer));
-            Some(StatusLineState::with_renderer(
-                &config,
-                frame_requester_clone.clone(),
-                renderer,
-            ))
-        } else {
-            None
-        };
+        let status_overlay = StatusLineOverlay::new(
+            &config,
+            frame_requester_clone.clone(),
+            app_event_tx.clone(),
+            status_renderer,
+        );
 
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -1286,7 +1192,7 @@ impl ChatWidget {
                 placeholder_text: placeholder,
                 disable_paste_burst: config.disable_paste_burst,
             }),
-            status_line,
+            status_overlay,
             active_cell: None,
             config: config.clone(),
             auth_manager,
@@ -1306,7 +1212,6 @@ impl ChatWidget {
             full_reasoning_buffer: String::new(),
             current_status_header: String::from("Working"),
             retry_status_header: None,
-            custom_statusline_enabled,
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: true,
@@ -1318,9 +1223,15 @@ impl ChatWidget {
             feedback,
             current_rollout_path: None,
         };
-        if widget.custom_statusline_enabled {
-            widget.bootstrap_status_line();
+        if let Some(overlay) = widget.status_overlay.as_mut() {
+            let queued: Vec<String> = widget
+                .queued_user_messages
+                .iter()
+                .map(|m| m.text.clone())
+                .collect();
+            overlay.bootstrap(&widget.config, widget.token_info.clone(), queued);
         }
+        widget.refresh_queued_user_messages();
         widget
     }
 
@@ -1865,32 +1776,9 @@ impl ChatWidget {
             .map(|m| m.text.clone())
             .collect();
         self.bottom_pane.set_queued_user_messages(messages.clone());
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.set_queued_messages(messages);
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.set_queued_messages(messages);
         }
-    }
-
-    fn exec_status_label(command: &[String]) -> String {
-        if command.is_empty() {
-            return "Running command".to_string();
-        }
-        let joined = command.join(" ");
-        let summary = truncate_text(&joined, 40);
-        format!("Running {summary}")
-    }
-
-    fn tool_status_label(invocation: &codex_core::protocol::McpInvocation) -> String {
-        let label = if invocation.server.is_empty() {
-            invocation.tool.clone()
-        } else {
-            format!("{}::{}", invocation.server, invocation.tool)
-        };
-        let summary = truncate_text(&label, 36);
-        format!("Calling {summary}")
-    }
-
-    fn approval_status_label(subject: &str) -> String {
-        format!("Awaiting {subject} approval")
     }
 
     pub(crate) fn add_diff_in_progress(&mut self) {
@@ -2585,8 +2473,8 @@ impl ChatWidget {
 
     pub(crate) fn clear_token_usage(&mut self) {
         self.token_info = None;
-        if let Some(status_line) = self.status_line.as_mut() {
-            status_line.update_tokens(None);
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.update_tokens(None);
         }
     }
 
@@ -2599,33 +2487,17 @@ impl ChatWidget {
 impl WidgetRef for &ChatWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let [_, active_cell_area, bottom_pane_area] = self.layout_areas(area);
-        let use_custom_statusline = self.custom_statusline_enabled
-            && self.status_line.is_some()
-            && !self.bottom_pane.has_active_view()
-            && bottom_pane_area.height >= 3;
-        let (pane_area, pill_area, status_area) = if use_custom_statusline {
-            let pill_area = Rect {
-                x: bottom_pane_area.x,
-                y: bottom_pane_area.y,
-                width: bottom_pane_area.width,
-                height: 1,
-            };
-            let status_area = Rect {
-                x: bottom_pane_area.x,
-                y: bottom_pane_area.y + bottom_pane_area.height - 1,
-                width: bottom_pane_area.width,
-                height: 1,
-            };
-            let pane_area = Rect {
-                x: bottom_pane_area.x,
-                y: bottom_pane_area.y + 1,
-                width: bottom_pane_area.width,
-                height: bottom_pane_area.height.saturating_sub(2),
-            };
-            (Some(pane_area), Some(pill_area), Some(status_area))
-        } else {
-            (None, None, None)
-        };
+        let overlay_layout = self.status_overlay.as_ref().and_then(|overlay| {
+            overlay.layout(bottom_pane_area, self.bottom_pane.has_active_view())
+        });
+        let (pane_area, pill_area, status_area) =
+            overlay_layout.map_or((None, None, None), |layout| {
+                (
+                    Some(layout.pane_area),
+                    Some(layout.run_pill_area),
+                    Some(layout.status_line_area),
+                )
+            });
 
         if let Some(pane_area) = pane_area {
             (&self.bottom_pane).render(pane_area, buf);
@@ -2644,13 +2516,13 @@ impl WidgetRef for &ChatWidget {
                 tool.render_ref(area, buf);
             }
         }
-        if let Some(pill_area) = pill_area {
+        if let (Some(overlay), Some(pill_area)) = (self.status_overlay.as_ref(), pill_area) {
             Clear.render(pill_area, buf);
-            self.render_custom_run_pill(pill_area, buf);
+            overlay.render_run_pill(pill_area, buf);
         }
-        if let Some(status_area) = status_area {
+        if let (Some(overlay), Some(status_area)) = (self.status_overlay.as_ref(), status_area) {
             Clear.render(status_area, buf);
-            self.render_custom_status_line(status_area, buf);
+            overlay.render_status_line(status_area, buf);
         }
         self.last_rendered_width.set(Some(area.width as usize));
     }
@@ -2716,144 +2588,6 @@ impl Notification {
             Some(truncate_text(trimmed, AGENT_NOTIFICATION_PREVIEW_GRAPHEMES))
         }
     }
-}
-
-fn detect_devspace() -> Option<String> {
-    #[cfg(test)]
-    if let Some(override_value) = DEVSPACE_OVERRIDE.lock().unwrap().clone() {
-        return override_value;
-    }
-
-    env::var("TMUX_DEVSPACE")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-}
-
-fn detect_aws_profile() -> Option<String> {
-    env::var("AWS_PROFILE")
-        .or_else(|_| env::var("AWS_VAULT"))
-        .ok()
-        .map(|profile| {
-            profile
-                .trim()
-                .trim_start_matches("export AWS_PROFILE=")
-                .to_string()
-        })
-        .filter(|s| !s.is_empty())
-}
-
-fn detect_hostname() -> Option<String> {
-    if let Ok(host) = env::var("HOSTNAME")
-        && !host.trim().is_empty()
-    {
-        return Some(host);
-    }
-    get_hostname().ok().and_then(|os| os.into_string().ok())
-}
-
-async fn collect_status_line_git_snapshot(cwd: PathBuf) -> Option<StatusLineGitSnapshot> {
-    let info = collect_git_info(&cwd).await?;
-    let (dirty, ahead, behind) = git_status_porcelain(&cwd)
-        .await
-        .unwrap_or((false, None, None));
-    Some(StatusLineGitSnapshot {
-        branch: info.branch,
-        dirty,
-        ahead,
-        behind,
-    })
-}
-
-async fn git_status_porcelain(cwd: &Path) -> Option<(bool, Option<i64>, Option<i64>)> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain=2", "--branch"])
-        .current_dir(cwd)
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut dirty = false;
-    let mut ahead = None;
-    let mut behind = None;
-    for line in text.lines() {
-        if !line.starts_with('#') {
-            dirty = true;
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("# branch.ab ") {
-            let mut parts = rest.split_whitespace();
-            if let Some(ahead_part) = parts.next() {
-                ahead = ahead_part
-                    .strip_prefix('+')
-                    .and_then(|s| s.parse::<i64>().ok());
-            }
-            if let Some(behind_part) = parts.next() {
-                behind = behind_part
-                    .strip_prefix('-')
-                    .and_then(|s| s.parse::<i64>().ok());
-            }
-        }
-    }
-    Some((dirty, ahead, behind))
-}
-
-async fn detect_kube_context_async() -> Option<String> {
-    spawn_blocking(detect_kube_context_sync)
-        .await
-        .ok()
-        .flatten()
-}
-
-fn detect_kube_context_sync() -> Option<String> {
-    for path in kube_config_paths() {
-        if let Ok(contents) = fs::read_to_string(&path) {
-            for line in contents.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with('#') {
-                    continue;
-                }
-                if let Some(value) = trimmed.strip_prefix("current-context:") {
-                    let context = value.trim();
-                    if !context.is_empty() {
-                        return Some(trim_kube_context(context));
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn kube_config_paths() -> Vec<PathBuf> {
-    if let Some(paths) = env::var_os("KUBECONFIG") {
-        env::split_paths(&paths).collect()
-    } else if let Some(home) = env::var_os("HOME") {
-        vec![PathBuf::from(home).join(".kube/config")]
-    } else {
-        Vec::new()
-    }
-}
-
-fn trim_kube_context(context: &str) -> String {
-    context.rsplit('/').next().unwrap_or(context).to_string()
-}
-
-#[cfg(test)]
-lazy_static! {
-    static ref DEVSPACE_OVERRIDE: Mutex<Option<Option<String>>> = Mutex::new(None);
-}
-
-#[cfg(test)]
-pub(crate) fn set_devspace_override_for_tests(value: Option<String>) {
-    *DEVSPACE_OVERRIDE.lock().unwrap() = Some(value);
-}
-
-#[cfg(test)]
-pub(crate) fn clear_devspace_override_for_tests() {
-    *DEVSPACE_OVERRIDE.lock().unwrap() = None;
 }
 
 const AGENT_NOTIFICATION_PREVIEW_GRAPHEMES: usize = 200;
