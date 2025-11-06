@@ -32,14 +32,21 @@ use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::features::is_known_feature_key;
 
+const CLI_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("CODEX_CLI_GIT_SHA"),
+    ")"
+);
+
 /// Codex CLI
 ///
 /// If no subcommand is specified, options will be forwarded to the interactive CLI.
 #[derive(Debug, Parser)]
 #[clap(
     author,
-    version,
-    // If a sub‑command is given, ignore requirements of the default args.
+    version = CLI_VERSION,
+    // If a sub-command is given, ignore requirements of the default args.
     subcommand_negates_reqs = true,
     // The executable is sometimes invoked via a platform‑specific name like
     // `codex-x86_64-unknown-linux-musl`, but the help output should always use
@@ -672,6 +679,13 @@ mod tests {
                 .map(Result::unwrap),
             update_action: None,
         }
+    }
+
+    #[test]
+    fn version_flag_reports_commit_sha() {
+        let command = MultitoolCli::command();
+        let version = command.get_version().expect("version should be set");
+        assert_eq!(CLI_VERSION, version);
     }
 
     #[test]

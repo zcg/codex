@@ -12,6 +12,8 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
+        gitRevision =
+          if self ? rev && self.rev != null then self.rev else "unknown";
         rustToolchain = pkgs.rust-bin.nightly.latest.default;
         rustPlatform = pkgs.makeRustPlatform {
           inherit (pkgs) stdenv;
@@ -49,6 +51,7 @@
           src = ./codex-rs;
           inherit cargoLock;
           cargoSha256 = cargoVendorSha;
+          CODEX_BUILD_GIT_SHA = gitRevision;
           nativeBuildInputs = with pkgs; [ pkg-config ];
           buildInputs = with pkgs;
             [ openssl libgit2 curl zlib ]
