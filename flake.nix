@@ -32,6 +32,7 @@
           lockFile = ./codex-rs/Cargo.lock;
           outputHashes = {
             "ratatui-0.29.0" = "sha256-HBvT5c8GsiCxMffNjJGLmHnvG77A6cqEL+1ARurBXho=";
+            "crossterm-0.28.1" = "0vzgpvbri4m4qydkj50ch468az7myy04qh5z2n500p1f4dysv87a";
           };
         };
         cargoVendorSha = "sha256-NP94EW+XS1PrbFfMnGOCnwoNoT1S7txJ8bDD6xRb5hw=";
