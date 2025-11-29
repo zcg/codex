@@ -83,6 +83,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools pkg-config
 
+      - name: Set version in Cargo.toml
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # Update workspace version in codex-rs/Cargo.toml
+          sed -i.bak "s/^version = \"0.0.0\"/version = \"${VERSION}\"/" codex-rs/Cargo.toml
+          echo "Updated Cargo.toml version to ${VERSION}"
+          grep "^version" codex-rs/Cargo.toml
+
       - name: Build
         working-directory: codex-rs
         run: cargo build --target ${{ matrix.target }} --release --bin codex
