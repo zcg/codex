@@ -1,0 +1,200 @@
+name: 88code Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: 88code-release
+  cancel-in-progress: true
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Generate date version
+        id: version
+        run: |
+          # Use format YYYY.M.D (no leading zeros)
+          VERSION=$(date +%Y.%-m.%-d)
+
+          # Check if version already exists on npm, add suffix if needed
+          SUFFIX=""
+          while npm view @88code/codex@${VERSION}${SUFFIX} > /dev/null 2>&1; do
+            if [ -z "$SUFFIX" ]; then
+              SUFFIX=".1"
+            else
+              NUM=${SUFFIX#.}
+              SUFFIX=".$(( NUM + 1 ))"
+            fi
+          done
+
+          FINAL_VERSION="${VERSION}${SUFFIX}"
+          echo "Generated version: $FINAL_VERSION"
+          echo "version=$FINAL_VERSION" >> $GITHUB_OUTPUT
+
+  build:
+    needs: version
+    name: Build - ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-xlarge
+            target: aarch64-apple-darwin
+          - runner: macos-15-xlarge
+            target: x86_64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.90
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ${{ github.workspace }}/codex-rs/target/
+          key: cargo-${{ matrix.runner }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install musl tools (Linux)
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools pkg-config
+
+      - name: Build
+        working-directory: codex-rs
+        run: cargo build --target ${{ matrix.target }} --release --bin codex
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          # Match the directory structure expected by codex.js:
+          # vendor/{target}/codex/codex (or codex.exe on Windows)
+          TARGET="${{ matrix.target }}"
+          DEST="dist/vendor/${TARGET}/codex"
+          mkdir -p "$DEST"
+
+          if [[ "${{ matrix.runner }}" == windows* ]]; then
+            cp "codex-rs/target/${TARGET}/release/codex.exe" "$DEST/codex.exe"
+          else
+            cp "codex-rs/target/${TARGET}/release/codex" "$DEST/codex"
+            chmod +x "$DEST/codex"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/vendor/
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: find artifacts -type f | head -50
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Prepare npm package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p package/bin package/vendor
+
+          # Create package.json for @88code/codex
+          cat > package/package.json << 'PKGJSON'
+          {
+            "name": "@88code/codex",
+            "version": "VERSION_PLACEHOLDER",
+            "description": "88code CLI - forked from OpenAI Codex with enhanced features",
+            "license": "Apache-2.0",
+            "bin": {
+              "codex": "bin/codex.js"
+            },
+            "type": "module",
+            "engines": {
+              "node": ">=16"
+            },
+            "files": [
+              "bin",
+              "vendor"
+            ],
+            "repository": {
+              "type": "git",
+              "url": "git+https://github.com/zcg/codex.git"
+            },
+            "keywords": [
+              "codex",
+              "cli",
+              "ai",
+              "coding",
+              "assistant",
+              "88code"
+            ]
+          }
+          PKGJSON
+
+          # Replace version placeholder
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" package/package.json
+
+          # Copy the launcher script
+          cp codex-cli/bin/codex.js package/bin/
+
+          # Copy all platform binaries (vendor structure from artifacts)
+          cp -r artifacts/* package/vendor/
+
+          # Make binaries executable
+          find package/vendor -name "codex" -type f -exec chmod +x {} \;
+
+          # Show final structure
+          echo "=== Package structure ==="
+          find package -type f | sort
+
+          echo "=== package.json ==="
+          cat package/package.json
+
+      - name: Publish to npm
+        working-directory: package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "Publishing @88code/codex@${{ needs.version.outputs.version }}"
+          npm publish --access public
+
+      - name: Verify publication
+        run: |
+          sleep 10
+          npm view @88code/codex@${{ needs.version.outputs.version }}
