@@ -12,50 +12,49 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      skip: ${{ steps.version.outputs.skip }}
     steps:
       - name: Generate date version
         id: version
         run: |
-          # Use format YYYY.M.D (no leading zeros)
           VERSION=$(date +%Y.%-m.%-d)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
 
-          # Check if version already exists on npm, add suffix if needed
-          SUFFIX=""
-          while npm view @88code/codex@${VERSION}${SUFFIX} > /dev/null 2>&1; do
-            if [ -z "$SUFFIX" ]; then
-              SUFFIX=".1"
-            else
-              NUM=${SUFFIX#.}
-              SUFFIX=".$(( NUM + 1 ))"
-            fi
-          done
-
-          FINAL_VERSION="${VERSION}${SUFFIX}"
-          echo "Generated version: $FINAL_VERSION"
-          echo "version=$FINAL_VERSION" >> $GITHUB_OUTPUT
+          # Check if main package already exists
+          if npm view @88code/codex@${VERSION} > /dev/null 2>&1; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Version $VERSION already published"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
 
   build:
     needs: version
-    name: Build - ${{ matrix.target }}
+    if: needs.version.outputs.skip != 'true'
+    name: Build - ${{ matrix.pkg }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS - macos-15 is latest arm64, macos-13 is last Intel
           - runner: macos-15
             target: aarch64-apple-darwin
+            pkg: darwin-arm64
           - runner: macos-13
             target: x86_64-apple-darwin
-          # Linux x64 and arm64
+            pkg: darwin-x64
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
+            pkg: linux-x64
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-          # Windows x64 and arm64
+            pkg: linux-arm64
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
+            pkg: win32-x64
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
+            pkg: win32-arm64
 
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -87,38 +86,58 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          # Update workspace version in codex-rs/Cargo.toml
           sed -i.bak "s/^version = \"0.0.0\"/version = \"${VERSION}\"/" codex-rs/Cargo.toml
           echo "Updated Cargo.toml version to ${VERSION}"
-          grep "^version" codex-rs/Cargo.toml
 
       - name: Build
         working-directory: codex-rs
         run: cargo build --target ${{ matrix.target }} --release --bin codex
 
-      - name: Stage binary
+      - name: Stage platform package
         shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          PKG: ${{ matrix.pkg }}
+          TARGET: ${{ matrix.target }}
         run: |
-          # Match the directory structure expected by codex.js:
-          # vendor/{target}/codex/codex (or codex.exe on Windows)
-          TARGET="${{ matrix.target }}"
-          DEST="dist/vendor/${TARGET}/codex"
-          mkdir -p "$DEST"
+          mkdir -p "dist/@88code/codex-${PKG}"
 
+          # Create platform package.json
+          cat > "dist/@88code/codex-${PKG}/package.json" << EOF
+          {
+            "name": "@88code/codex-${PKG}",
+            "version": "${VERSION}",
+            "description": "88code CLI binary for ${PKG}",
+            "license": "Apache-2.0",
+            "os": ["${PKG%%-*}"],
+            "cpu": ["${PKG##*-}"],
+            "repository": {
+              "type": "git",
+              "url": "git+https://github.com/zcg/codex.git"
+            }
+          }
+          EOF
+
+          # Copy binary
           if [[ "${{ matrix.runner }}" == windows* ]]; then
-            cp "codex-rs/target/${TARGET}/release/codex.exe" "$DEST/codex.exe"
+            cp "codex-rs/target/${TARGET}/release/codex.exe" "dist/@88code/codex-${PKG}/"
           else
-            cp "codex-rs/target/${TARGET}/release/codex" "$DEST/codex"
-            chmod +x "$DEST/codex"
+            cp "codex-rs/target/${TARGET}/release/codex" "dist/@88code/codex-${PKG}/"
+            chmod +x "dist/@88code/codex-${PKG}/codex"
           fi
+
+          echo "=== Package contents ==="
+          ls -la "dist/@88code/codex-${PKG}/"
+          cat "dist/@88code/codex-${PKG}/package.json"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.target }}
-          path: dist/vendor/
+          name: pkg-${{ matrix.pkg }}
+          path: dist/
 
   publish:
     needs: [version, build]
+    if: needs.version.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -129,11 +148,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: binary-*
+          pattern: pkg-*
           merge-multiple: true
 
       - name: List downloaded artifacts
-        run: find artifacts -type f | head -50
+        run: find artifacts -type f | sort
 
       - uses: pnpm/action-setup@v4
 
@@ -142,17 +161,35 @@ jobs:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Prepare npm package
+      - name: Publish platform packages
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          mkdir -p package/bin package/vendor
+          for pkg in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+            PKG_DIR="artifacts/@88code/codex-${pkg}"
+            if [ -d "$PKG_DIR" ]; then
+              echo "Publishing @88code/codex-${pkg}@${VERSION}"
+              cd "$PKG_DIR"
+              npm publish --access public
+              cd -
+            else
+              echo "⚠️ Package directory not found: $PKG_DIR"
+            fi
+          done
 
-          # Create package.json for @88code/codex
-          cat > package/package.json << 'PKGJSON'
+      - name: Create and publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p main-package/bin
+
+          # Create main package.json with optionalDependencies
+          cat > main-package/package.json << EOF
           {
             "name": "@88code/codex",
-            "version": "VERSION_PLACEHOLDER",
+            "version": "${VERSION}",
             "description": "88code CLI - forked from OpenAI Codex with enhanced features",
             "license": "Apache-2.0",
             "bin": {
@@ -163,52 +200,41 @@ jobs:
               "node": ">=16"
             },
             "files": [
-              "bin",
-              "vendor"
+              "bin"
             ],
             "repository": {
               "type": "git",
               "url": "git+https://github.com/zcg/codex.git"
             },
-            "keywords": [
-              "codex",
-              "cli",
-              "ai",
-              "coding",
-              "assistant",
-              "88code"
-            ]
+            "keywords": ["codex", "cli", "ai", "coding", "assistant", "88code"],
+            "optionalDependencies": {
+              "@88code/codex-darwin-arm64": "${VERSION}",
+              "@88code/codex-darwin-x64": "${VERSION}",
+              "@88code/codex-linux-arm64": "${VERSION}",
+              "@88code/codex-linux-x64": "${VERSION}",
+              "@88code/codex-win32-arm64": "${VERSION}",
+              "@88code/codex-win32-x64": "${VERSION}"
+            }
           }
-          PKGJSON
+          EOF
 
-          # Replace version placeholder
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" package/package.json
+          # Copy the 88code launcher script
+          cp codex-cli/bin/codex-88code.js main-package/bin/codex.js
 
-          # Copy the launcher script
-          cp codex-cli/bin/codex.js package/bin/
-
-          # Copy all platform binaries (vendor structure from artifacts)
-          cp -r artifacts/* package/vendor/
-
-          # Make binaries executable
-          find package/vendor -name "codex" -type f -exec chmod +x {} \;
-
-          # Show final structure
-          echo "=== Package structure ==="
-          find package -type f | sort
-
+          echo "=== Main package structure ==="
+          find main-package -type f | sort
           echo "=== package.json ==="
-          cat package/package.json
+          cat main-package/package.json
 
-      - name: Publish to npm
-        working-directory: package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          echo "Publishing @88code/codex@${{ needs.version.outputs.version }}"
+          # Publish main package
+          cd main-package
+          echo "Publishing @88code/codex@${VERSION}"
           npm publish --access public
 
       - name: Verify publication
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           sleep 10
-          npm view @88code/codex@${{ needs.version.outputs.version }}
+          echo "Verifying @88code/codex@${VERSION}"
+          npm view @88code/codex@${VERSION}
