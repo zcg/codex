@@ -583,6 +583,10 @@ impl App {
                 self.chat_widget.update_statusline_kube_context(context);
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::StatusLine88Code(data) => {
+                self.chat_widget.update_statusline_88code(data);
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::OpenFullAccessConfirmation { preset } => {
                 self.chat_widget.open_full_access_confirmation(preset);
             }

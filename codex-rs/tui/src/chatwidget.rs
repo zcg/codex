@@ -107,6 +107,7 @@ use crate::render::renderable::RenderableExt;
 use crate::render::renderable::RenderableItem;
 use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
+use crate::statusline::StatusLine88CodeSnapshot;
 use crate::statusline::StatusLineGitSnapshot;
 use crate::statusline::StatusLineLayout;
 use crate::statusline::StatusLineOverlay;
@@ -377,6 +378,12 @@ impl ChatWidget {
     pub(crate) fn update_statusline_kube_context(&mut self, context: Option<String>) {
         if let Some(overlay) = self.status_overlay.as_mut() {
             overlay.update_kube_context(context);
+        }
+    }
+
+    pub(crate) fn update_statusline_88code(&mut self, data: Option<StatusLine88CodeSnapshot>) {
+        if let Some(overlay) = self.status_overlay.as_mut() {
+            overlay.update_88code(data);
         }
     }
 

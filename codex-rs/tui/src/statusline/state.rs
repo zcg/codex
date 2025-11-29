@@ -12,8 +12,8 @@ use codex_core::protocol_config_types::ReasoningEffort;
 use ratatui::text::Line;
 
 use super::DEFAULT_STATUS_MESSAGE;
-use super::DefaultStatusLineRenderer;
 use super::RunTimerSnapshot;
+use super::StatusLine88CodeSnapshot;
 use super::StatusLineContextSnapshot;
 use super::StatusLineDevspaceSnapshot;
 use super::StatusLineGitSnapshot;
@@ -37,14 +37,6 @@ pub(crate) struct StatusLineState {
 }
 
 impl StatusLineState {
-    pub(crate) fn new(config: &Config, frame_requester: FrameRequester) -> Self {
-        Self::with_renderer(
-            config,
-            frame_requester,
-            Box::<DefaultStatusLineRenderer>::default(),
-        )
-    }
-
     pub(crate) fn with_renderer(
         config: &Config,
         frame_requester: FrameRequester,
@@ -148,6 +140,11 @@ impl StatusLineState {
         self.request_redraw();
     }
 
+    pub(crate) fn set_88code_info(&mut self, info: Option<StatusLine88CodeSnapshot>) {
+        self.snapshot.environment.code88 = info;
+        self.request_redraw();
+    }
+
     pub(crate) fn set_session_id(&mut self, session_id: Option<String>) {
         let _ = session_id;
     }
@@ -226,11 +223,6 @@ impl StatusLineState {
             timer.resume(Instant::now());
             self.request_redraw();
         }
-    }
-
-    pub(crate) fn elapsed_seconds(&self) -> Option<u64> {
-        let timer = self.run_timer.as_ref()?;
-        Some(timer.snapshot(Instant::now()).elapsed_running.as_secs())
     }
 
     pub(crate) fn snapshot_for_render(&self, now: Instant) -> StatusLineSnapshot {

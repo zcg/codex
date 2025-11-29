@@ -16,6 +16,7 @@ use ratatui::text::Span;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+pub(crate) mod code88_api;
 mod overlay;
 mod palette;
 pub(crate) mod skins;
@@ -133,6 +134,7 @@ pub(crate) struct StatusLineEnvironmentSnapshot {
     pub hostname: Option<String>,
     pub aws_profile: Option<String>,
     pub kubernetes_context: Option<String>,
+    pub code88: Option<StatusLine88CodeSnapshot>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -194,6 +196,21 @@ pub(crate) struct StatusLineGitSnapshot {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StatusLineDevspaceSnapshot {
     pub name: String,
+}
+
+/// 88code usage information snapshot for status line display.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StatusLine88CodeSnapshot {
+    /// Subscription tier name (e.g., "PRO", "FREE").
+    pub subscription_name: Option<String>,
+    /// Total credit limit for the subscription.
+    pub credit_limit: Option<f64>,
+    /// Current remaining credits.
+    pub current_credits: Option<f64>,
+    /// True if the API request failed.
+    pub is_error: bool,
+    /// Error message for debugging (shown in status bar).
+    pub error_msg: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -309,6 +326,8 @@ enum DegradeOp {
     BasenamePath,
     HidePath,
     HideGit,
+    Simplify88Code,
+    Drop88Code,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -317,6 +336,22 @@ struct EnvironmentInclusion {
     aws_profile: bool,
     kubernetes: bool,
     devspace: bool,
+    code88: bool,
+    code88_variant: Code88Variant,
+}
+
+/// Display variants for 88code usage info.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+enum Code88Variant {
+    /// Full display: "88code PRO $59.33/$60.00"
+    #[default]
+    Full,
+    /// Compact display: "88 PRO 59.3/60"
+    Compact,
+    /// Minimal display: "88 59/60"
+    Minimal,
+    /// Hidden (not displayed)
+    Hidden,
 }
 
 impl EnvironmentInclusion {
@@ -326,6 +361,8 @@ impl EnvironmentInclusion {
             aws_profile: snapshot.aws_profile.is_some(),
             kubernetes: snapshot.kubernetes_context.is_some(),
             devspace: snapshot.devspace.is_some(),
+            code88: snapshot.code88.is_some(),
+            code88_variant: Code88Variant::Full,
         }
     }
 
@@ -335,13 +372,17 @@ impl EnvironmentInclusion {
             aws_profile: false,
             kubernetes: false,
             devspace: false,
+            code88: false,
+            code88_variant: Code88Variant::Hidden,
         }
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Default)]
 pub(crate) struct DefaultStatusLineRenderer;
 
+#[cfg(test)]
 impl StatusLineRenderer for DefaultStatusLineRenderer {
     fn render(&self, snapshot: &StatusLineSnapshot, width: u16, now: Instant) -> Line<'static> {
         render_status_line(snapshot, width, now)
@@ -501,6 +542,8 @@ impl<'a> RenderModel<'a> {
             DegradeOp::HideContext,
             DegradeOp::SimplifyGit,
             DegradeOp::HideGit,
+            DegradeOp::Simplify88Code,
+            DegradeOp::Drop88Code,
             DegradeOp::DropDevspace,
             DegradeOp::DropKubernetes,
             DegradeOp::DropAwsProfile,
@@ -592,6 +635,26 @@ impl<'a> RenderModel<'a> {
             }
             DegradeOp::HideGit if self.git_variant != GitVariant::Hidden => {
                 self.git_variant = GitVariant::Hidden;
+                true
+            }
+            DegradeOp::Simplify88Code
+                if self.env.code88
+                    && matches!(
+                        self.env.code88_variant,
+                        Code88Variant::Full | Code88Variant::Compact
+                    ) =>
+            {
+                self.env.code88_variant = match self.env.code88_variant {
+                    Code88Variant::Full => Code88Variant::Compact,
+                    Code88Variant::Compact => Code88Variant::Minimal,
+                    _ => Code88Variant::Minimal,
+                };
+                true
+            }
+            DegradeOp::Drop88Code
+                if self.env.code88 && self.env.code88_variant != Code88Variant::Hidden =>
+            {
+                self.env.code88_variant = Code88Variant::Hidden;
                 true
             }
             _ => false,
@@ -859,6 +922,13 @@ impl<'a> RenderModel<'a> {
 
     fn collect_right_segments(&self) -> Vec<PowerlineSegment> {
         let mut segments: Vec<PowerlineSegment> = Vec::new();
+        // 88code segment - display at the right side
+        if self.env.code88
+            && self.env.code88_variant != Code88Variant::Hidden
+            && let Some(segment) = self.build_88code_segment()
+        {
+            segments.push(segment);
+        }
         if self.env.devspace
             && let Some(devspace) = self.snapshot.environment.devspace.as_ref()
         {
@@ -910,6 +980,67 @@ impl<'a> RenderModel<'a> {
             text.push_str(&format!(" ↓{behind}"));
         }
         Some(PowerlineSegment::text(SKY, truncate_graphemes(&text, 24)))
+    }
+
+    fn build_88code_segment(&self) -> Option<PowerlineSegment> {
+        let info = self.snapshot.environment.code88.as_ref()?;
+
+        // Error state - show error message for debugging
+        if info.is_error {
+            let err_text = if let Some(msg) = &info.error_msg {
+                // Truncate error message to fit
+                let short_msg = if msg.len() > 30 {
+                    format!("{}...", &msg[..27])
+                } else {
+                    msg.clone()
+                };
+                format!("88err:{short_msg}")
+            } else {
+                "88code n/a".to_string()
+            };
+            return Some(PowerlineSegment::text(RED, err_text));
+        }
+
+        // Loading state - data not yet fetched
+        if info.subscription_name.is_none() && info.credit_limit.is_none() {
+            return Some(PowerlineSegment::text(SUBTEXT0, "88code ...".to_string()));
+        }
+
+        let current = info.current_credits.unwrap_or(0.0);
+        let limit = info.credit_limit.unwrap_or(0.0);
+        let sub_name = info.subscription_name.as_deref().unwrap_or("");
+
+        let text = match self.env.code88_variant {
+            Code88Variant::Full => {
+                // "88code PRO $59.33/$60.00"
+                format!("88code {sub_name} ${current:.2}/${limit:.2}")
+            }
+            Code88Variant::Compact => {
+                // "88 PRO 59.3/60"
+                format!("88 {sub_name} {current:.1}/{limit:.0}")
+            }
+            Code88Variant::Minimal => {
+                // "88 59/60"
+                format!("88 {current:.0}/{limit:.0}")
+            }
+            Code88Variant::Hidden => return None,
+        };
+
+        // Choose color based on credit remaining percentage
+        let color = if limit > 0.0 {
+            let ratio = current / limit;
+            if ratio < 0.1 {
+                RED // Less than 10% - danger
+            } else if ratio < 0.2 {
+                YELLOW // Less than 20% - warning
+            } else {
+                PEACH // Normal - orange
+            }
+        } else {
+            PEACH
+        };
+
+        Some(PowerlineSegment::text(color, text))
     }
 
     fn render_middle(&self, width: usize) -> Option<(Vec<Span<'static>>, usize)> {
@@ -1446,6 +1577,7 @@ mod tests {
                 hostname: Some("vermissian".to_string()),
                 aws_profile: Some("prod".to_string()),
                 kubernetes_context: Some("codex-dev".to_string()),
+                code88: None,
             },
         }
     }

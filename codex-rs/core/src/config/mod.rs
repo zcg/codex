@@ -162,6 +162,10 @@ pub struct Config {
     /// Toggle for the bespoke Codex status line rendering.
     pub tui_custom_statusline: bool,
 
+    /// 88code API key for usage tracking in status line.
+    /// Sourced from config file or CODE88_API_KEY environment variable.
+    pub tui_code88_api_key: Option<String>,
+
     /// Enable ASCII animations and shimmer effects in the TUI.
     pub animations: bool,
 
@@ -1112,6 +1116,9 @@ impl Config {
 
         let forced_login_method = cfg.forced_login_method;
 
+        // Detect 88code API key before codex_home is moved
+        let tui_code88_api_key = Self::detect_88code_api_key(&codex_home);
+
         let model = model
             .or(config_profile.model)
             .or(cfg.model)
@@ -1268,6 +1275,7 @@ impl Config {
                 .as_ref()
                 .map(|t| t.custom_statusline)
                 .unwrap_or_else(|| Tui::default().custom_statusline),
+            tui_code88_api_key,
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);
@@ -1298,6 +1306,45 @@ impl Config {
             }
         }
         None
+    }
+
+    /// Detect 88code API key from environment variable or auth.json.
+    /// Priority: OPENAI_API_KEY env > key88 env > auth.json
+    /// The key is identified by the `88_` prefix.
+    fn detect_88code_api_key(codex_home: &Path) -> Option<String> {
+        // First, check OPENAI_API_KEY environment variable (highest priority)
+        if let Ok(key) = std::env::var("OPENAI_API_KEY")
+            && key.starts_with("88_")
+        {
+            return Some(key);
+        }
+
+        // Second, check key88 environment variable (common 88code config)
+        if let Ok(key) = std::env::var("key88")
+            && key.starts_with("88_")
+        {
+            return Some(key);
+        }
+
+        // Fallback to auth.json
+        let auth_file = codex_home.join("auth.json");
+        let contents = std::fs::read_to_string(&auth_file).ok()?;
+
+        #[derive(serde::Deserialize)]
+        struct AuthJson {
+            #[serde(rename = "OPENAI_API_KEY")]
+            openai_api_key: Option<String>,
+        }
+
+        let auth: AuthJson = serde_json::from_str(&contents).ok()?;
+        let key = auth.openai_api_key?;
+
+        // Only return the key if it starts with "88_" prefix
+        if key.starts_with("88_") {
+            Some(key)
+        } else {
+            None
+        }
     }
 
     fn load_override_from_file(
@@ -3020,6 +3067,7 @@ model_verbosity = "high"
                 tui_notifications: Default::default(),
                 animations: true,
                 tui_custom_statusline: true,
+                tui_code88_api_key: None,
                 otel: OtelConfig::default(),
             },
             o3_profile_config
@@ -3094,6 +3142,7 @@ model_verbosity = "high"
             tui_notifications: Default::default(),
             animations: true,
             tui_custom_statusline: true,
+            tui_code88_api_key: None,
             otel: OtelConfig::default(),
         };
 
@@ -3183,6 +3232,7 @@ model_verbosity = "high"
             tui_notifications: Default::default(),
             animations: true,
             tui_custom_statusline: true,
+            tui_code88_api_key: None,
             otel: OtelConfig::default(),
         };
 
@@ -3258,6 +3308,7 @@ model_verbosity = "high"
             tui_notifications: Default::default(),
             animations: true,
             tui_custom_statusline: true,
+            tui_code88_api_key: None,
             otel: OtelConfig::default(),
         };
 

@@ -9,6 +9,7 @@ use codex_file_search::FileMatch;
 
 use crate::bottom_pane::ApprovalRequest;
 use crate::history_cell::HistoryCell;
+use crate::statusline::StatusLine88CodeSnapshot;
 use crate::statusline::StatusLineGitSnapshot;
 
 use codex_core::protocol::AskForApproval;
@@ -50,6 +51,8 @@ pub(crate) enum AppEvent {
     StatusLineGit(Option<StatusLineGitSnapshot>),
     /// Background kube context updates for the custom status line.
     StatusLineKubeContext(Option<String>),
+    /// Background 88code usage updates for the custom status line.
+    StatusLine88Code(Option<StatusLine88CodeSnapshot>),
 
     /// Result of computing a `/diff` command.
     DiffResult(String),

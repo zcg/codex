@@ -6,8 +6,10 @@ use std::sync::Mutex;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::statusline::StatusLine88CodeSnapshot;
 use crate::statusline::StatusLineGitSnapshot;
 use crate::statusline::StatusLineRenderer;
+use crate::statusline::code88_api::fetch_88code_usage;
 use crate::statusline::state::StatusLineState;
 use crate::text_formatting::truncate_text;
 use codex_core::config::Config;
@@ -38,6 +40,7 @@ pub(crate) struct StatusLineOverlay {
     state: StatusLineState,
     app_event_tx: AppEventSender,
     cwd: PathBuf,
+    code88_api_key: Option<String>,
 }
 
 impl StatusLineOverlay {
@@ -68,6 +71,7 @@ impl StatusLineOverlay {
             state,
             app_event_tx,
             cwd: config.cwd.clone(),
+            code88_api_key: config.tui_code88_api_key.clone(),
         })
     }
 
@@ -83,6 +87,14 @@ impl StatusLineOverlay {
         self.state.set_queued_messages(queued_messages);
         self.spawn_git_refresh();
         self.spawn_kube_refresh();
+        // Initialize 88code with loading state if API key is configured
+        if self.code88_api_key.is_some() {
+            self.state.set_88code_info(Some(StatusLine88CodeSnapshot {
+                is_error: false,
+                ..Default::default()
+            }));
+        }
+        self.spawn_88code_refresh();
     }
 
     pub(crate) fn sync_model(&mut self, config: &Config) {
@@ -99,6 +111,7 @@ impl StatusLineOverlay {
     pub(crate) fn spawn_background_tasks(&self) {
         self.spawn_git_refresh();
         self.spawn_kube_refresh();
+        self.spawn_88code_refresh();
     }
 
     pub(crate) fn refresh_git(&self) {
@@ -128,12 +141,43 @@ impl StatusLineOverlay {
         });
     }
 
+    fn spawn_88code_refresh(&self) {
+        let Some(api_key) = self.code88_api_key.clone() else {
+            return; // No API key configured, skip refresh
+        };
+        let Ok(handle) = Handle::try_current() else {
+            return;
+        };
+        let tx = self.app_event_tx.clone();
+        handle.spawn(async move {
+            let snapshot = match fetch_88code_usage(&api_key).await {
+                Ok(data) => Some(StatusLine88CodeSnapshot {
+                    subscription_name: data.subscription_name,
+                    credit_limit: data.credit_limit,
+                    current_credits: data.current_credits,
+                    is_error: false,
+                    error_msg: None,
+                }),
+                Err(e) => Some(StatusLine88CodeSnapshot {
+                    is_error: true,
+                    error_msg: Some(e.to_string()),
+                    ..Default::default()
+                }),
+            };
+            tx.send(AppEvent::StatusLine88Code(snapshot));
+        });
+    }
+
     pub(crate) fn update_git(&mut self, git: Option<StatusLineGitSnapshot>) {
         self.state.set_git_info(git);
     }
 
     pub(crate) fn update_kube_context(&mut self, context: Option<String>) {
         self.state.set_kubernetes_context(context);
+    }
+
+    pub(crate) fn update_88code(&mut self, data: Option<StatusLine88CodeSnapshot>) {
+        self.state.set_88code_info(data);
     }
 
     pub(crate) fn set_renderer(&mut self, renderer: Box<dyn StatusLineRenderer>) {
