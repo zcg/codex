@@ -17,9 +17,10 @@ jobs:
       - name: Generate date version
         id: version
         run: |
-          VERSION=$(date +%Y.%-m.%-d)
+          # Use Beijing timezone for version date
+          VERSION=$(TZ='Asia/Shanghai' date +%Y.%-m.%-d)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Generated version: $VERSION"
+          echo "Generated version: $VERSION (Beijing date)"
 
           # Check if main package already exists
           if npm view @88code/codex@${VERSION} > /dev/null 2>&1; then
