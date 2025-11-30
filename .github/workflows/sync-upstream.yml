@@ -26,7 +26,7 @@ jobs:
 
       - name: Add upstream and fetch
         run: |
-          git remote add upstream https://github.com/openai/codex.git || true
+          git remote add upstream https://github.com/byebye-code/codex.git || true
           git fetch upstream main
 
       - name: Check for updates
