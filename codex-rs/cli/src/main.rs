@@ -35,6 +35,7 @@ use crate::mcp_cmd::McpCli;
 
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::find_codex_home;
 use codex_core::features::is_known_feature_key;
 
 const CLI_VERSION: &str = concat!(
@@ -446,6 +447,18 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
             );
+
+            // Check and trigger 88code login if no token exists
+            if let Ok(codex_home) = find_codex_home() {
+                if codex_code88::load_token(&codex_home).is_none() {
+                    // No token found, try browser login (with fallback to manual input)
+                    if let Err(e) = codex_code88::ensure_token_with_fallback(&codex_home).await {
+                        tracing::warn!("88code login failed: {e}");
+                        // Continue without 88code - non-fatal error
+                    }
+                }
+            }
+
             let exit_info = codex_tui::run_main(interactive, codex_linux_sandbox_exe).await?;
             handle_app_exit(exit_info)?;
         }

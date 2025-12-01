@@ -1308,8 +1308,8 @@ impl Config {
         None
     }
 
-    /// Detect 88code API key from environment variable or auth.json.
-    /// Priority: OPENAI_API_KEY env > key88 env > auth.json
+    /// Detect 88code API key from environment variable, token file, or auth.json.
+    /// Priority: OPENAI_API_KEY env > key88 env > 88code-token.json > auth.json
     /// The key is identified by the `88_` prefix.
     fn detect_88code_api_key(codex_home: &Path) -> Option<String> {
         // First, check OPENAI_API_KEY environment variable (highest priority)
@@ -1324,6 +1324,21 @@ impl Config {
             && key.starts_with("88_")
         {
             return Some(key);
+        }
+
+        // Third, check 88code-token.json (from browser login)
+        let token_file = codex_home.join("88code-token.json");
+        if let Ok(contents) = std::fs::read_to_string(&token_file) {
+            #[derive(serde::Deserialize)]
+            struct TokenFile {
+                token: String,
+            }
+            if let Ok(tf) = serde_json::from_str::<TokenFile>(&contents) {
+                if !tf.token.is_empty() {
+                    // Format as 88code API key
+                    return Some(format!("88_{}", tf.token));
+                }
+            }
         }
 
         // Fallback to auth.json
