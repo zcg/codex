@@ -80,7 +80,10 @@ pub async fn run_browser_login(codex_home: &Path, timeout_secs: u64) -> Result<S
         // Wait a bit for page to be ready before reload
         tokio::time::sleep(Duration::from_secs(1)).await;
         if let Err(e) = cdp.reload().await {
-            warn!("Failed to auto-reload page: {}, user needs to refresh manually", e);
+            warn!(
+                "Failed to auto-reload page: {}, user needs to refresh manually",
+                e
+            );
             eprintln!("88code: 自动刷新失败，请手动刷新网页或完成登录...\n");
         } else {
             eprintln!("88code: 页面已刷新，等待获取 token...\n");
@@ -144,7 +147,7 @@ fn parse_token_from_response(body: &str) -> Result<String> {
 
     resp.data
         .map(|d| d.token)
-        .ok_or_else(|| Code88Error::NoToken)
+        .ok_or(Code88Error::NoToken)
 }
 
 /// Prompt user for manual token input as fallback.

@@ -96,26 +96,26 @@ fn detect_browser_windows() -> Option<PathBuf> {
     }
 
     // Try using `where` command as fallback
-    if let Ok(output) = Command::new("where").arg("msedge").output() {
-        if output.status.success() {
-            let path_str = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = path_str.lines().next() {
-                let path = PathBuf::from(line.trim());
-                if path.exists() {
-                    return Some(path);
-                }
+    if let Ok(output) = Command::new("where").arg("msedge").output()
+        && output.status.success()
+    {
+        let path_str = String::from_utf8_lossy(&output.stdout);
+        if let Some(line) = path_str.lines().next() {
+            let path = PathBuf::from(line.trim());
+            if path.exists() {
+                return Some(path);
             }
         }
     }
 
-    if let Ok(output) = Command::new("where").arg("chrome").output() {
-        if output.status.success() {
-            let path_str = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = path_str.lines().next() {
-                let path = PathBuf::from(line.trim());
-                if path.exists() {
-                    return Some(path);
-                }
+    if let Ok(output) = Command::new("where").arg("chrome").output()
+        && output.status.success()
+    {
+        let path_str = String::from_utf8_lossy(&output.stdout);
+        if let Some(line) = path_str.lines().next() {
+            let path = PathBuf::from(line.trim());
+            if path.exists() {
+                return Some(path);
             }
         }
     }
@@ -198,13 +198,10 @@ fn find_available_port() -> Option<u16> {
         return Some(DEFAULT_DEBUG_PORT);
     }
 
-    for &port in ALTERNATIVE_PORTS {
-        if is_port_available(port) {
-            return Some(port);
-        }
-    }
-
-    None
+    ALTERNATIVE_PORTS
+        .iter()
+        .find(|&&port| is_port_available(port))
+        .copied()
 }
 
 /// Launch a browser with remote debugging enabled.

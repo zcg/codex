@@ -97,7 +97,7 @@ impl CdpSession {
                 let data: Value = serde_json::from_str(&text)?;
 
                 // Check if this is a response to our command
-                if data.get("id").and_then(|v| v.as_u64()) == Some(id as u64) {
+                if data.get("id").and_then(Value::as_u64) == Some(id as u64) {
                     if let Some(error) = data.get("error") {
                         return Err(Code88Error::CdpResponseError(error.to_string()));
                     }
@@ -140,33 +140,33 @@ impl CdpSession {
                 let data: Value = serde_json::from_str(&text)?;
 
                 // Check for Network.responseReceived event
-                if data.get("method") == Some(&json!("Network.responseReceived")) {
-                    if let Some(params) = data.get("params") {
-                        let response_url = params
-                            .get("response")
-                            .and_then(|r| r.get("url"))
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("");
+                if data.get("method") == Some(&json!("Network.responseReceived"))
+                    && let Some(params) = data.get("params")
+                {
+                    let response_url = params
+                        .get("response")
+                        .and_then(|r| r.get("url"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("");
 
-                        trace!("Network response: {}", response_url);
+                    trace!("Network response: {}", response_url);
 
-                        if response_url.contains(url_pattern) {
-                            debug!("Found matching response: {}", response_url);
+                    if response_url.contains(url_pattern) {
+                        debug!("Found matching response: {}", response_url);
 
-                            // Get the request ID to fetch the body
-                            let request_id = params
-                                .get("requestId")
-                                .ok_or_else(|| {
-                                    Code88Error::CdpResponseError("Missing requestId".to_string())
-                                })?
-                                .clone();
+                        // Get the request ID to fetch the body
+                        let request_id = params
+                            .get("requestId")
+                            .ok_or_else(|| {
+                                Code88Error::CdpResponseError("Missing requestId".to_string())
+                            })?
+                            .clone();
 
-                            // Small delay to ensure response body is ready
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        // Small delay to ensure response body is ready
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-                            // Fetch the response body
-                            return self.get_response_body(&request_id).await;
-                        }
+                        // Fetch the response body
+                        return self.get_response_body(&request_id).await;
                     }
                 }
 
@@ -203,7 +203,7 @@ impl CdpSession {
         // Check if body is base64 encoded
         let is_base64 = result
             .get("base64Encoded")
-            .and_then(|b| b.as_bool())
+            .and_then(Value::as_bool)
             .unwrap_or(false);
 
         if is_base64 {
