@@ -314,11 +314,34 @@ For casual greetings, acknowledgements, or other one-off conversational messages
 
 # Tool Guidelines
 
+## Built-in tools (MANDATORY)
+
+**You MUST use built-in tools for file operations. DO NOT use shell commands for these tasks.**
+
+| Task | MUST Use | NEVER Use |
+|------|----------|-----------|
+| Read files | `read_file` | `cat`, `head`, `tail`, `type`, `Get-Content`, Python scripts |
+| List directories | `list_dir` | `ls`, `dir`, `Get-ChildItem`, `tree` |
+| Search file contents | `grep_files` | `grep`, `rg`, `findstr`, `Select-String` |
+
+**Why this is mandatory:**
+- Built-in tools are faster and more reliable
+- They avoid shell escaping, encoding, and platform issues
+- They provide structured, consistent output across all platforms
+
+**Only use shell commands for tasks that built-in tools CANNOT do:**
+- Running build/test commands (`cargo build`, `npm test`, `make`)
+- Git operations (`git commit`, `git push`, `git log`)
+- Package management (`npm install`, `pip install`)
+- Interactive or complex pipeline operations
+
+**IMPORTANT:** If you find yourself using `cat`, `Get-Content`, `rg`, or similar shell commands to read or search files, STOP and use the built-in tool instead.
+
 ## Shell commands
 
-When using the shell, you must adhere to the following guidelines:
+When using the shell (only for tasks that require it), you must adhere to the following guidelines:
 
-- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)
+- Do not use shell commands for file reading or searching when built-in tools are available.
 - Read files in chunks with a max chunk size of 250 lines. Do not use python scripts to attempt to output larger chunks of a file. Command line output will be truncated after 10 kilobytes or 256 lines of output, regardless of the command used.
 
 ## apply_patch
