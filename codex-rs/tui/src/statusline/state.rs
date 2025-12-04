@@ -8,7 +8,7 @@ use crate::tui::FrameRequester;
 use codex_core::config::Config;
 use codex_core::protocol::TokenUsage;
 use codex_core::protocol::TokenUsageInfo;
-use codex_core::protocol_config_types::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffort;
 use ratatui::text::Line;
 
 use super::DEFAULT_STATUS_MESSAGE;

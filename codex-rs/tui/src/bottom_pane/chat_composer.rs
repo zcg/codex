@@ -229,34 +229,6 @@ impl ChatComposer {
             + footer_total_height
     }
 
-    fn layout_areas(&self, area: Rect) -> [Rect; 3] {
-        let footer_props = self.footer_props();
-        let footer_hint_height = self
-            .custom_footer_height()
-            .unwrap_or_else(|| footer_height(footer_props));
-        let footer_spacing = Self::footer_spacing(footer_hint_height);
-        let footer_total_height = footer_hint_height + footer_spacing;
-        let popup_constraint = match &self.active_popup {
-            ActivePopup::Command(popup) => {
-                Constraint::Max(popup.calculate_required_height(area.width))
-            }
-            ActivePopup::File(popup) => Constraint::Max(popup.calculate_required_height()),
-            ActivePopup::Skill(popup) => {
-                Constraint::Max(popup.calculate_required_height(area.width))
-            }
-            ActivePopup::None => Constraint::Max(footer_total_height),
-        };
-
-        let [text_area, popup_area, footer_area] = Layout::vertical([
-            Constraint::Min(1),
-            popup_constraint,
-            Constraint::Length(footer_total_height),
-        ])
-        .areas(area);
-
-        [text_area, popup_area, footer_area]
-    }
-
     fn render_layout(&self, area: Rect) -> ComposerRenderLayout {
         let mut footer_hint_height = 0;
         let mut footer_spacing = 0;
