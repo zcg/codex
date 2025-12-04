@@ -209,8 +209,7 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
     ]
 });
 
-pub(crate) fn builtin_model_presets(auth_mode: Option<AuthMode>) -> Vec<ModelPreset> {
-    let _ = auth_mode; // Ignore auth_mode, show all models
+pub(crate) fn builtin_model_presets(_auth_mode: Option<AuthMode>) -> Vec<ModelPreset> {
     PRESETS
         .iter()
         .filter(|preset| preset.show_in_picker)
@@ -226,13 +225,13 @@ pub fn all_model_presets() -> &'static Vec<ModelPreset> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::AuthMode;
 
     #[test]
     fn only_one_default_model_is_configured() {
         let default_models = PRESETS.iter().filter(|preset| preset.is_default).count();
         assert!(default_models == 1);
     }
+
 
     #[test]
     fn gpt_5_1_codex_max_visible_for_api_key_auth() {
