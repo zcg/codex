@@ -388,6 +388,7 @@ impl Default for Tui {
         Self {
             notifications: Notifications::default(),
             animations: true,
+            show_tooltips: true,
             custom_statusline: Tui::default_custom_statusline(),
         }
     }

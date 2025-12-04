@@ -1,4 +1,4 @@
-use crate::protocol_config_types::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffort;
 use serde::Deserialize;
 use serde::Serialize;
 use sha1::Digest;
