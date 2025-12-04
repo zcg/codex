@@ -12,27 +12,33 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      skip: ${{ steps.version.outputs.skip }}
     steps:
-      - name: Generate date version
+      - name: Generate date version with build number
         id: version
         run: |
-          # Use Beijing timezone for version date
-          VERSION=$(TZ='Asia/Shanghai' date +%Y.%-m.%-d)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Generated version: $VERSION (Beijing date)"
+          # Use Beijing timezone for version date (format: YYYY.M.D.BUILD)
+          # New date always > old date, multiple builds per day supported
+          DATE_VERSION=$(TZ='Asia/Shanghai' date +%Y.%-m.%-d)
+          echo "Date version: $DATE_VERSION (Beijing date)"
 
-          # Check if main package already exists
-          if npm view @88code/codex@${VERSION} > /dev/null 2>&1; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "⚠️ Version $VERSION already published"
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
+          # Find the next available build number for today
+          BUILD_NUM=1
+          while true; do
+            CHECK_VERSION="${DATE_VERSION}.${BUILD_NUM}"
+            if npm view @88code/codex@${CHECK_VERSION} > /dev/null 2>&1; then
+              echo "Version $CHECK_VERSION already exists, trying next..."
+              BUILD_NUM=$((BUILD_NUM + 1))
+            else
+              break
+            fi
+          done
+
+          VERSION="${DATE_VERSION}.${BUILD_NUM}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Generated version: $VERSION"
 
   build:
     needs: version
-    if: needs.version.outputs.skip != 'true'
     name: Build - ${{ matrix.pkg }}
     strategy:
       fail-fast: false
@@ -138,7 +144,6 @@ jobs:
 
   publish:
     needs: [version, build]
-    if: needs.version.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
