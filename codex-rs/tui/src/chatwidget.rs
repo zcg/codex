@@ -1177,8 +1177,6 @@ impl ChatWidget {
         }
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
-            .push_approval_request(request, &self.config.features);
->>>>>>> upstream/main
         self.request_redraw();
     }
 
