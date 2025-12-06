@@ -92,6 +92,7 @@ codex_windows_sandbox = { package = "codex-windows-sandbox", path = "../windows-
 
 [features]
 deterministic_process_ids = []
+test-support = []
 
 
 [target.'cfg(target_os = "linux")'.dependencies]
